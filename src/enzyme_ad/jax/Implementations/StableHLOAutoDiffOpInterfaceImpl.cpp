@@ -36,6 +36,7 @@
 #include "src/enzyme_ad/jax/Implementations/WhileLoopInfo.h"
 #include "src/enzyme_ad/jax/Implementations/XLADerivatives.h"
 #include "src/enzyme_ad/jax/Utils.h"
+#include <cmath>
 #include <cstdint>
 #include <utility>
 
@@ -3288,6 +3289,131 @@ public:
   }
 };
 
+// Early-exit counted loops
+// ------------------------
+// Reverse mode gives every stablehlo.while whose trip count it cannot read off
+// the condition (AutoDiffWhileRev::cacheValues) an extra iteration argument: an
+// integer counter that starts at zero and grows by one per iteration, whose
+// final value is cached as the reverse loop's trip count. The typical shape is
+// `while (i < N) & (t < T)` with a data-dependent `t`: the loop runs at most as
+// many iterations as its bounded conjunct allows, and that counter is exactly
+// the tape index the cache removal needs. What the removal still needs is a
+// static size for the tape buffers, XLA having no dynamic shapes: the smallest
+// bound derivable from a conjunct `arg < limit` (or `<=`) whose argument
+// starts at a constant and advances by a constant positive step per iteration
+// (integer or floating point), or an explicit `enzymexla.max_trip_count`
+// attribute on the loop. Slots beyond the actual trip count are never read on
+// the reverse path, so over-allocation is safe.
+static std::optional<double> splatConstantAsDouble(Value v) {
+  DenseElementsAttr attr;
+  if (!matchPattern(v, m_Constant(&attr)) || !attr.isSplat())
+    return std::nullopt;
+  Type et = attr.getElementType();
+  if (et.isInteger())
+    return (double)attr.getSplatValue<APInt>().getSExtValue();
+  if (isa<FloatType>(et)) {
+    APFloat f = attr.getSplatValue<APFloat>();
+    bool lossy = false;
+    f.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven, &lossy);
+    return f.convertToDouble();
+  }
+  return std::nullopt;
+}
+
+// The iteration argument that is a zero-based unit-step integer counter, the
+// last one when several qualify (reverse mode appends its own).
+static std::optional<unsigned> findIterationCounter(stablehlo::WhileOp op) {
+  Block *body = &op.getBody().front();
+  Operation *term = body->getTerminator();
+  for (unsigned n = op->getNumOperands(); n > 0; --n) {
+    unsigned i = n - 1;
+    auto TT = dyn_cast<RankedTensorType>(op->getOperand(i).getType());
+    if (!TT || TT.getRank() != 0 || !TT.getElementType().isInteger())
+      continue;
+    if (!matchPattern(op->getOperand(i), m_Zero()))
+      continue;
+    auto add = term->getOperand(i).getDefiningOp<stablehlo::AddOp>();
+    if (!add)
+      continue;
+    auto isArg = [&](Value v) {
+      auto ba = dyn_cast<BlockArgument>(v);
+      return ba && ba.getOwner() == body && ba.getArgNumber() == i;
+    };
+    if ((isArg(add.getLhs()) && matchPattern(add.getRhs(), m_One())) ||
+        (isArg(add.getRhs()) && matchPattern(add.getLhs(), m_One())))
+      return i;
+  }
+  return std::nullopt;
+}
+
+static std::optional<int64_t> staticTripCountBound(stablehlo::WhileOp op) {
+  if (auto attr = op->getAttrOfType<IntegerAttr>("enzymexla.max_trip_count"))
+    return attr.getInt();
+
+  Block *cond = &op.getCond().front();
+  Block *body = &op.getBody().front();
+  Operation *bodyTerm = body->getTerminator();
+  SmallVector<Value> worklist{cond->getTerminator()->getOperand(0)};
+  std::optional<int64_t> best;
+  while (!worklist.empty()) {
+    Value v = worklist.pop_back_val();
+    if (auto andOp = v.getDefiningOp<stablehlo::AndOp>()) {
+      worklist.push_back(andOp.getLhs());
+      worklist.push_back(andOp.getRhs());
+      continue;
+    }
+    auto cmp = v.getDefiningOp<stablehlo::CompareOp>();
+    if (!cmp)
+      continue;
+    bool inclusive;
+    switch (cmp.getComparisonDirection()) {
+    case stablehlo::ComparisonDirection::LT:
+      inclusive = false;
+      break;
+    case stablehlo::ComparisonDirection::LE:
+      inclusive = true;
+      break;
+    default:
+      continue;
+    }
+    auto arg = dyn_cast<BlockArgument>(cmp.getLhs());
+    if (!arg || arg.getOwner() != cond)
+      continue;
+    unsigned i = arg.getArgNumber();
+    auto limit = splatConstantAsDouble(cmp.getRhs());
+    auto start = splatConstantAsDouble(op->getOperand(i));
+    if (!limit || !start)
+      continue;
+    auto add = bodyTerm->getOperand(i).getDefiningOp<stablehlo::AddOp>();
+    if (!add)
+      continue;
+    auto isArg = [&](Value x) {
+      auto ba = dyn_cast<BlockArgument>(x);
+      return ba && ba.getOwner() == body && ba.getArgNumber() == i;
+    };
+    std::optional<double> step;
+    if (isArg(add.getLhs()))
+      step = splatConstantAsDouble(add.getRhs());
+    else if (isArg(add.getRhs()))
+      step = splatConstantAsDouble(add.getLhs());
+    if (!step || *step <= 0)
+      continue;
+    double span = *limit - *start;
+    int64_t n = 0;
+    if (span > 0 || (inclusive && span == 0))
+      n = inclusive ? (int64_t)std::floor(span / *step) + 1
+                    : (int64_t)std::ceil(span / *step);
+    // A floating-point counter accumulates rounding error; one spare slot
+    // keeps the tape write in bounds if that error buys an extra iteration.
+    if (isa<FloatType>(
+            cast<RankedTensorType>(arg.getType()).getElementType()))
+      n += 1;
+    if (!best || n < *best)
+      best = n;
+  }
+  return best;
+}
+
 struct WhileOpEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<WhileOpEnzymeOpsRemover,
                                                         stablehlo::WhileOp> {
@@ -3368,9 +3494,27 @@ public:
 
     WhileLoopInfo info(whileOp);
 
-    if (info.computeInfo().failed() || !info.isValid()) {
-      return rewriter.notifyMatchFailure(
-          op, "WhileOp does not have known iteration count for cache removal");
+    // A loop the analysis cannot count is still removable when reverse mode
+    // gave it an iteration counter and a static trip-count bound exists (see
+    // findIterationCounter / staticTripCountBound above).
+    bool countedLoop = info.computeInfo().succeeded() && info.isValid();
+    std::optional<unsigned> counterArg;
+    std::optional<int64_t> tripBound;
+    if (!countedLoop) {
+      counterArg = findIterationCounter(whileOp);
+      tripBound = staticTripCountBound(whileOp);
+      if (!counterArg || !tripBound) {
+        return rewriter.notifyMatchFailure(op, [&](Diagnostic &diag) {
+          diag << "WhileOp does not have known iteration count for cache "
+                  "removal";
+          if (!counterArg)
+            diag << "; no zero-based unit-step integer iteration argument";
+          if (!tripBound)
+            diag << "; no static trip-count bound (no `arg < constant` "
+                    "conjunct with constant start and step, and no "
+                    "enzymexla.max_trip_count attribute)";
+        });
+      }
     }
 
     DenseMap<Value, SmallVector<Operation *>> updatedGradientUsers;
@@ -3445,7 +3589,9 @@ public:
     // Slots beyond the actual trip count are never read on the reverse
     // path, so over-allocation is safe.
     int64_t numIters;
-    if (info.isConstant()) {
+    if (!countedLoop) {
+      numIters = *tripBound;
+    } else if (info.isConstant()) {
       numIters = info.getConstantNumIters();
     } else {
       numIters = ShapedType::kDynamic;
@@ -3465,7 +3611,9 @@ public:
 
     Value inductionVariable; // [0,..., N - 1] counter from within the loop
 
-    if (matchPattern(info.getStart(), m_Zero()) && info.isStepOne()) {
+    if (!countedLoop) {
+      inductionVariable = body->getArgument(*counterArg);
+    } else if (matchPattern(info.getStart(), m_Zero()) && info.isStepOne()) {
       inductionVariable = body->getArgument(0);
     }
 
@@ -3670,15 +3818,26 @@ public:
     if (inductionVariable &&
         (caches.size() != 0 ||
          (reverseIVPlaceholder && !reverseIVPlaceholder->use_empty()))) {
-      if (isa<BlockArgument>(inductionVariable) &&
-          cast<BlockArgument>(inductionVariable).getArgNumber() != 0)
-        resultIdx++;
-
       OpBuilder::InsertionGuard guard(rewriter);
       rewriter.setInsertionPoint(otherWhileOp);
       SmallVector<Value> operands(otherWhileOp->getOperands().begin(),
                                   otherWhileOp->getOperands().end());
-      if (info.isConstant()) {
+      if (!countedLoop) {
+        // The tape is indexed by the actual iteration, not the bound: the
+        // reverse loop was built to run exactly as many iterations as the
+        // primal did (its limit is the cached final counter), so its own
+        // limit seeds the reverse tape index.
+        WhileLoopInfo otherInfo(otherWhileOp);
+        if (otherInfo.computeInfo().failed() || !otherInfo.isValid())
+          return rewriter.notifyMatchFailure(
+              op, "reverse loop of an early-exit loop has no readable limit");
+        itersV = otherInfo.getLimit();
+        auto one = stablehlo::ConstantOp::create(
+            rewriter, otherWhileOp->getLoc(), itersV.getType(),
+            cast<ElementsAttr>(makeAttr(itersV.getType(), 1)));
+        operands.push_back(stablehlo::SubtractOp::create(
+            rewriter, otherWhileOp->getLoc(), itersV, one));
+      } else if (info.isConstant()) {
         operands.push_back(
             makeI64Constant(otherWhileOp->getLoc(), rewriter, numIters - 1));
       } else {
