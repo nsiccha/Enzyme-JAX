@@ -402,6 +402,52 @@ static SmallVector<Value> takeResultAdjoints(Operation *orig,
   return adjoints;
 }
 
+// A value defined in a branch has no uses outside it, so its adjoint only
+// lives in the matching branch of the reverse op. Create that adjoint there,
+// zeroed on entry, instead of in the function's entry block (what
+// localizeGradients does for loop bodies). Left in the entry block, the
+// removers hoist it out of the reverse op as a result and a surrounding loop
+// carries it as an iteration argument: one per active scalar in the branch,
+// which is most of a scalar-heavy loop body. An adjoint that does not have
+// the expected shape -- an init whose only other user is its initial zero
+// set -- stays where it is.
+static void localizeBranchAdjoints(Block *reverseBB, Block *fwd,
+                                   MGradientUtilsReverse *gutils) {
+  Operation *parent = fwd->getParentOp();
+  OpBuilder builder(reverseBB, reverseBB->begin());
+  auto localize = [&](Value val) {
+    if (gutils->isConstantValue(val))
+      return;
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface || iface.isMutable())
+      return;
+    Value grad = gutils->getDifferential(val);
+    auto init = grad.getDefiningOp<enzyme::InitOp>();
+    if (!init)
+      return;
+    enzyme::SetOp initialSet;
+    for (Operation *user : grad.getUsers()) {
+      if (parent->isProperAncestor(user))
+        continue;
+      auto set = dyn_cast<enzyme::SetOp>(user);
+      if (!set || initialSet)
+        return;
+      initialSet = set;
+    }
+    if (!initialSet)
+      return;
+    Value zero = iface.createNullValue(builder, initialSet.getLoc());
+    enzyme::SetOp::create(builder, initialSet.getLoc(), grad, zero);
+    initialSet->erase();
+    init->moveBefore(reverseBB, reverseBB->begin());
+  };
+  for (Value arg : fwd->getArguments())
+    localize(arg);
+  for (Operation &op : *fwd)
+    for (Value res : op.getResults())
+      localize(res);
+}
+
 class AutoDiffIfRev
     : public ReverseAutoDiffOpInterface::ExternalModel<AutoDiffIfRev,
                                                        stablehlo::IfOp> {
@@ -422,6 +468,7 @@ public:
       newReg.push_back(new Block());
       Block *reverseBB = &newReg.front();
 
+      localizeBranchAdjoints(reverseBB, oBB, gutils);
       OpBuilder revBuilder(reverseBB, reverseBB->end());
       auto term = oBB->getTerminator();
 
@@ -541,6 +588,7 @@ public:
       newReg.push_back(new Block());
       Block *reverseBB = &newReg.front();
 
+      localizeBranchAdjoints(reverseBB, oBB, gutils);
       OpBuilder revBuilder(reverseBB, reverseBB->end());
       auto term = oBB->getTerminator();
 
@@ -3353,6 +3401,56 @@ static void eraseExploredGradientOps(Block *block, PatternRewriter &rewriter) {
   }
 }
 
+// A gradient whose enzyme.init sits in one of `op`'s blocks belongs to a
+// value defined in that branch (localizeBranchAdjoints). By the time `op` is
+// handled, nested ops have hoisted their accesses, so every get/set of it is a
+// direct child of that block: resolve it there, each get replaced by the value
+// last set before it, so it never becomes a result of `op` or an iteration
+// argument of a surrounding loop. This does not rely on the generic pattern
+// pass that runs before the removers: that pass tries each set before the
+// gets it is waiting on are resolved and does not come back to it, which left
+// such a gradient behind for the hoisting below to move out of the block that
+// defines it.
+static void resolveBlockLocalGradients(Operation *op,
+                                       PatternRewriter &rewriter) {
+  for (Region &region : op->getRegions()) {
+    for (Block &block : region) {
+      SmallVector<enzyme::InitOp> inits;
+      for (Operation &nested : block)
+        if (auto init = dyn_cast<enzyme::InitOp>(&nested))
+          if (isa<enzyme::GradientType>(init.getResult().getType()))
+            inits.push_back(init);
+      for (enzyme::InitOp init : inits) {
+        Value grad = init.getResult();
+        if (!llvm::all_of(grad.getUsers(), [&](Operation *user) {
+              return isa<enzyme::GetOp, enzyme::SetOp>(user) &&
+                     user->getBlock() == &block;
+            }))
+          continue;
+        SmallVector<Operation *> accesses;
+        for (Operation &nested : block)
+          if (isa<enzyme::GetOp, enzyme::SetOp>(&nested) &&
+              nested.getOperand(0) == grad)
+            accesses.push_back(&nested);
+        // A read before any write has no local reaching value.
+        if (!accesses.empty() && isa<enzyme::GetOp>(accesses.front()))
+          continue;
+        Value current;
+        for (Operation *access : accesses) {
+          if (auto set = dyn_cast<enzyme::SetOp>(access))
+            current = set.getValue();
+          else
+            rewriter.replaceAllUsesWith(cast<enzyme::GetOp>(access).getResult(),
+                                        current);
+        }
+        for (Operation *access : accesses)
+          rewriter.eraseOp(access);
+        rewriter.eraseOp(init);
+      }
+    }
+  }
+}
+
 struct WhileOpEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<WhileOpEnzymeOpsRemover,
                                                         stablehlo::WhileOp> {
@@ -3913,6 +4011,7 @@ struct IfOpEnzymeOpsRemover
     // branch.
 
     auto ifOp = cast<stablehlo::IfOp>(op);
+    resolveBlockLocalGradients(op, rewriter);
 
     Block *trueBlock = &ifOp.getTrueBranch().front(),
           *falseBlock = &ifOp.getFalseBranch().front();
@@ -4020,6 +4119,7 @@ struct CaseOpEnzymeOpsRemover
                                                         stablehlo::CaseOp> {
   LogicalResult removeEnzymeOps(Operation *op,
                                 PatternRewriter &rewriter) const {
+    resolveBlockLocalGradients(op, rewriter);
 
     auto caseOp = cast<stablehlo::CaseOp>(op);
 
