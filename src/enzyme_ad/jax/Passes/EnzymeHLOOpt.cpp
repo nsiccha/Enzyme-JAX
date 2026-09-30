@@ -4240,6 +4240,15 @@ struct ConvertConvertFloat final
     if (isa<FloatType>(prev.getType().getElementType()) &&
         isa<FloatType>(op.getType().getElementType()) &&
         isa<FloatType>(conv0.getType().getElementType())) {
+      // we only do the elimination if the intermediate conversion is exact,
+      // i.e. it keeps the type or goes to a wider one
+      auto prevTy = prev.getType().getElementType();
+      auto midTy = conv0.getType().getElementType();
+      if (prevTy != midTy &&
+          midTy.getIntOrFloatBitWidth() <= prevTy.getIntOrFloatBitWidth())
+        return rewriter.notifyMatchFailure(op,
+                                           "intermediate conversion rounds");
+
       if (prev.getType() == op.getType()) {
         rewriter.replaceOp(op, prev);
         return success();
