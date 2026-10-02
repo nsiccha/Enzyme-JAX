@@ -118,11 +118,61 @@ bool anyOpsAreDataDependent(ArrayRef<Operation *> ops) {
   return false;
 }
 
+// The values the regions of `ops` read from outside `ops`. A clone of the
+// ops into a wrapper function keeps those references, which then reach
+// across the function boundary: a constant can be cloned alongside, anything
+// else cannot be taken.
+static void collectRegionCaptures(ArrayRef<Operation *> ops,
+                                  SmallVectorImpl<Value> &captures) {
+  llvm::SmallPtrSet<Operation *, 4> roots(ops.begin(), ops.end());
+  DenseSet<Value> seen;
+  for (Operation *op : ops) {
+    for (Region &region : op->getRegions()) {
+      region.walk([&](Operation *inner) {
+        for (Value v : inner->getOperands()) {
+          if (!seen.insert(v).second)
+            continue;
+          Operation *def = v.getDefiningOp();
+          Region *home = def ? def->getParentRegion() : v.getParentRegion();
+          bool inside = false;
+          for (Region *r = home; r; r = r->getParentRegion())
+            if (roots.contains(r->getParentOp())) {
+              inside = true;
+              break;
+            }
+          if (!inside)
+            captures.push_back(v);
+        }
+      });
+    }
+  }
+}
+
+bool regionsCaptureOnlyConstants(ArrayRef<Operation *> ops) {
+  SmallVector<Value> captures;
+  collectRegionCaptures(ops, captures);
+  return llvm::all_of(captures, [](Value v) {
+    return v.getDefiningOp<stablehlo::ConstantOp>() != nullptr;
+  });
+}
+
+bool regionsCaptureOnlyConstants(Operation *op) {
+  return regionsCaptureOnlyConstants(ArrayRef<Operation *>(op));
+}
+
 func::FuncOp CreateWrapperUnbatchedFunction(
     mlir::ModuleOp modOp, PatternRewriter &rewriter, std::string funcName,
     std::optional<SmallVector<BatchLiftingMode>> batchLiftingModes,
     ArrayRef<Operation *> ops, std::optional<SmallVector<int64_t>> inShape,
     std::optional<SmallVector<int64_t>> outShape, FunctionType calleeType) {
+  // A region that reads a value from outside the ops keeps reading it from
+  // inside the wrapper: a constant is cloned in, anything else refuses the
+  // wrapper, and the callers decide this before they build anything.
+  SmallVector<Value> captures;
+  collectRegionCaptures(ops, captures);
+  for (Value v : captures)
+    if (!v.getDefiningOp<stablehlo::ConstantOp>())
+      return nullptr;
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToStart(modOp.getBody());
 
@@ -162,6 +212,33 @@ func::FuncOp CreateWrapperUnbatchedFunction(
 
   for (auto op : ops) {
     auto clonedOp = rewriter.clone(*op, mapper);
+    // A constant the regions read from outside is cloned into the block
+    // that reads it, so the region stands on its own: a batch interface
+    // clones a region with a mapping of its own, and a value the region
+    // took from the wrapper's body would be left behind when the wrapper
+    // is inlined and erased.
+    for (Region &region : clonedOp->getRegions()) {
+      for (Block &block : region) {
+        OpBuilder::InsertionGuard g(rewriter);
+        rewriter.setInsertionPointToStart(&block);
+        DenseMap<Value, Value> local;
+        block.walk([&](Operation *inner) {
+          for (OpOperand &use : inner->getOpOperands()) {
+            Value v = use.get();
+            if (!llvm::is_contained(captures, v))
+              continue;
+            auto it = local.find(v);
+            if (it == local.end())
+              it =
+                  local
+                      .insert(
+                          {v, rewriter.clone(*v.getDefiningOp())->getResult(0)})
+                      .first;
+            use.set(it->second);
+          }
+        });
+      }
+    }
     for (size_t i = 0; i < op->getNumResults(); i++) {
       mapper.map(op->getResult(i), clonedOp->getResult(i));
     }
@@ -530,6 +607,8 @@ LogicalResult ConcatInsertDimToBatchBase::matchAndRewriteImpl(
     }
 
     auto vdefOp = isValidTargetOp(definingOp->getOperand(0).getDefiningOp());
+    if (vdefOp && !::utils::regionsCaptureOnlyConstants(vdefOp))
+      vdefOp = nullptr;
     if (!vdefOp) {
       return rewriter.notifyMatchFailure(concatOp, "not a valid target op");
     }
@@ -572,6 +651,8 @@ LogicalResult ConcatInsertDimToBatchBase::matchAndRewriteImpl(
   func::FuncOp func = ::utils::CreateWrapperUnbatchedFunction(
       moduleOp, rewriter, "enzymexla_unbatched_ConcatInsertDimToBatch_",
       liftingModes, concatOpOperands[0], explicitReshapeShape);
+  if (!func)
+    return failure();
 
   outputShape.insert(outputShape.begin(), concatShape[concatDim]);
   auto batchOp = enzyme::BatchOp::create(
@@ -622,6 +703,9 @@ SliceToBatchBase::matchAndRewriteImpl(stablehlo::SliceOp sliceOp,
 
     Operation *onlyUser = *candidateSlice.getResult().getUsers().begin();
     Operation *candidateTargetOp = isValidTargetOp(onlyUser);
+    if (candidateTargetOp &&
+        !::utils::regionsCaptureOnlyConstants(candidateTargetOp))
+      candidateTargetOp = nullptr;
 
     bool isIntermediateReshape = false;
     Operation *preceedingOp = candidateSlice;
@@ -732,6 +816,25 @@ SliceToBatchBase::matchAndRewriteImpl(stablehlo::SliceOp sliceOp,
 
   relatedSlices = std::move(sortedSlices);
   relatedOps = std::move(sortedOps);
+
+  // The pieces the ops read are stacked into the batched operand. Pieces that
+  // follow one another merge into one slice; any others can only be stacked
+  // by concatenating them. For a convert that is not a form the
+  // simplifications keep: ConvertConcat distributes a convert over a
+  // concatenate's inputs unconditionally, a slice of the result then selects
+  // one of them, and the converts this pattern batched stand again for it to
+  // batch once more. Other ops over such a stack are left as they are
+  // (ConcatElementwise refuses converts for the same reason). It is decided
+  // here, before anything is built: a pattern that builds and then declines
+  // is offered its own leavings for as long as the driver runs.
+  if (isa<stablehlo::ConvertOp>(relatedOps[0])) {
+    for (size_t i = 1, e = relatedSlices.size(); i < e; ++i) {
+      if (!stablehlo::canMergeSlicesAlongAxis(
+              sliceDim, relatedSlices[i - 1].sliceOp, relatedSlices[i].sliceOp))
+        return rewriter.notifyMatchFailure(
+            sliceOp, "converts of pieces that do not follow one another");
+    }
+  }
 
   // quite an expensive check, so run at the very end
   if (::utils::anyOpsAreDataDependent(relatedOps)) {
@@ -848,6 +951,8 @@ SliceToBatchBase::matchAndRewriteImpl(stablehlo::SliceOp sliceOp,
   func::FuncOp func = ::utils::CreateWrapperUnbatchedFunction(
       moduleOp, rewriter, "enzymexla_unbatched_SliceToBatch_", liftingModes,
       relatedOps[0], std::nullopt);
+  if (!func)
+    return failure();
 
   SmallVector<int64_t> outputShape;
   outputShape.push_back(relatedSlices.size());
@@ -1153,16 +1258,10 @@ struct HoistableSliceComputation {
   SetVector<Value> results;   // frontier: values escaping `ops`
   DenseMap<Value, bool> batchableCache;
 
-  // The last state whose frontier was a single value; grow() falls back to it
+  // The last state whose frontier was profitable; grow() falls back to it
   // rather than leaving the computation forked.
   SetVector<Operation *> checkpointedOps;
   SetVector<Value> checkpointedResults;
-
-  // Whether growth ran out while forked and had to fall back. The prefix it
-  // fell back to is worth hoisting on its own: the fork means that value is
-  // consumed more than once in the loop, so every consumer left behind pays
-  // back the hoist.
-  bool rolledBack = false;
 
   HoistableSliceComputation(
       stablehlo::WhileOp whileOp, WhileLoopInfo &info,
@@ -1180,27 +1279,17 @@ struct HoistableSliceComputation {
 
   Block &body() { return whileOp.getBody().front(); }
 
-  // Extend the computation until the frontier is back down to a single value,
-  // or until it can take no more values.
-  LogicalResult grow() {
+  void grow() {
     while (absorbOneLayer()) {
-      if (results.size() == 1) {
+      if (isProfitable()) {
         checkpoint();
-        return success();
       }
     }
 
     restoreCheckpoint();
-    return failure();
   }
 
   bool isProfitable() {
-    // Only a single value is ever hoisted; a forked frontier was rolled back to
-    // a checkpoint by grow(), so this holds unless nothing grew at all.
-    if (results.size() != 1) {
-      return false;
-    }
-
     // A DAG of nothing but the slice and some reshapes has nothing to batch.
     if (!llvm::any_of(ops, [&](Operation *op) {
           return op != sInfo.sliceOp.getOperation() &&
@@ -1209,15 +1298,18 @@ struct HoistableSliceComputation {
       return false;
     }
 
-    // A fork is its own justification, whatever the branches go on to do: the
-    // value is consumed more than once in the loop, so the hoist is paid back
-    // by every consumer that stays behind. Only a computation that grew to a
-    // single value and stopped there has to say where it ends.
-    if (rolledBack) {
+    // A single value is always worth hoisting: whatever stays behind in the
+    // loop, the batched computation replaces a per-iteration one.
+    if (results.size() == 1) {
       return true;
     }
 
-    return endsWell(results.front());
+    // Every value of a forked frontier is materialized across the whole trip
+    // count and sliced back in the loop, so it is only worth it when every
+    // branch goes on to empty the loop. Otherwise grow() falls back to the
+    // last single value.
+    return llvm::all_of(results,
+                        [&](Value result) { return endsWell(result); });
   }
 
   // Does hoisting the computation that produces `result` actually shrink the
@@ -1301,7 +1393,6 @@ private:
   }
 
   void restoreCheckpoint() {
-    rolledBack |= ops.size() > checkpointedOps.size();
     ops = checkpointedOps;
     results = checkpointedResults;
   }
@@ -1616,8 +1707,7 @@ LogicalResult GreedyWhileLoopBatchFission::matchAndRewriteImpl(
   for (auto &slice : candidateSlices) {
     HoistableSliceComputation computation(whileOp, info, candidateSlices,
                                           userOpToSlicesMap, slice);
-    while (succeeded(computation.grow())) {
-    }
+    computation.grow();
 
     if (computation.isProfitable()) {
       profitable.push_back(std::move(computation));
@@ -2349,6 +2439,13 @@ bool liftOperationByBatching(
   SmallVector<SliceInfo<stablehlo::DynamicSliceOp>> mappedSliceInfos;
   DenseMap<Value, SmallVector<Operation *>> hoistMap;
 
+  // The op's regions may read the loop body, as a scatter that writes a
+  // constant made there does. The wrapper the lift clones the op into can
+  // take a constant along and nothing else; decided here, before anything is
+  // built.
+  if (!::utils::regionsCaptureOnlyConstants(op))
+    return false;
+
   auto opOperands = llvm::to_vector(op->getOperands());
   if (!traverseOperandsForHoisting(opOperands, whileOp, slices, info,
                                    batchLiftingModes, batchOperands, sliceDims,
@@ -2368,6 +2465,8 @@ bool liftOperationByBatching(
   func::FuncOp func = ::utils::CreateWrapperUnbatchedFunction(
       moduleOp, rewriter, "enzymexla_unbatched_WhileLoopBatchFission_",
       batchLiftingModes, op, std::nullopt);
+  if (!func)
+    return false;
 
   rewriter.setInsertionPoint(whileOp);
 
