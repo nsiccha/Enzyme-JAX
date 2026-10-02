@@ -46,15 +46,15 @@ module {
 }
 
 // CHECK: func.func @main(%arg0: tensor<3xf32>) -> tensor<27xf32> {
-// CHECK-NEXT:     %cst = stablehlo.constant dense<0.000000e+00> : tensor<1xf32>
-// CHECK-NEXT:     %cst_0 = stablehlo.constant dense<0xFF800000> : tensor<f32>
-// CHECK-NEXT:     %cst_1 = stablehlo.constant dense<0.000000e+00> : tensor<f32>
-// CHECK-NEXT:     %0 = stablehlo.reshape %arg0 : (tensor<3xf32>) -> tensor<1x3xf32>
-// CHECK-NEXT:     %1 = stablehlo.reduce(%0 init: %cst_0) applies stablehlo.maximum across dimensions = [1] : (tensor<1x3xf32>, tensor<f32>) -> tensor<1xf32>
-// CHECK-NEXT:     %2 = stablehlo.maximum %1, %cst : tensor<1xf32>
-// CHECK-NEXT:     %3 = stablehlo.pad %2, %cst_1, low = [2], high = [24], interior = [0] : (tensor<1xf32>, tensor<f32>) -> tensor<27xf32>
-// CHECK-NEXT:     return %3 : tensor<27xf32>
-// CHECK-NEXT: }
+// CHECK-DAG: %[[ZERO:.+]] = stablehlo.constant dense<0.000000e+00> : tensor<f32>
+// CHECK-DAG: %[[BROADCAST:.+]] = stablehlo.constant dense<0.000000e+00> : tensor<1xf32>
+// CHECK-DAG: %[[INIT:.+]] = stablehlo.constant dense<0xFF800000> : tensor<f32>
+// CHECK: %[[RESHAPE:.+]] = stablehlo.reshape %arg0 : (tensor<3xf32>) -> tensor<1x3xf32>
+// CHECK: %[[RED:.+]] = stablehlo.reduce(%[[RESHAPE]] init: %[[INIT]]) applies stablehlo.maximum across dimensions = [1] : (tensor<1x3xf32>, tensor<f32>) -> tensor<1xf32>
+// CHECK: %[[FOLD:.+]] = stablehlo.maximum %[[RED]], %[[BROADCAST]] : tensor<1xf32>
+// CHECK: %[[PAD:.+]] = stablehlo.pad %[[FOLD]], %[[ZERO]], low = [2], high = [24], interior = [0] : (tensor<1xf32>, tensor<f32>) -> tensor<27xf32>
+// CHECK: return %[[PAD]] : tensor<27xf32>
+// CHECK: }
 
 module {
   func.func @main(%arg0: tensor<3xf32>) -> tensor<27xf32> {
@@ -68,15 +68,15 @@ module {
 }
 
 // CHECK: func.func @main(%arg0: tensor<3xf32>) -> tensor<27xf32> {
-// CHECK-NEXT:     %cst = stablehlo.constant dense<0.000000e+00> : tensor<1xf32>
-// CHECK-NEXT:     %cst_0 = stablehlo.constant dense<0x7F800000> : tensor<f32>
-// CHECK-NEXT:     %cst_1 = stablehlo.constant dense<0.000000e+00> : tensor<f32>
-// CHECK-NEXT:     %0 = stablehlo.reshape %arg0 : (tensor<3xf32>) -> tensor<1x3xf32>
-// CHECK-NEXT:     %1 = stablehlo.reduce(%0 init: %cst_0) applies stablehlo.minimum across dimensions = [1] : (tensor<1x3xf32>, tensor<f32>) -> tensor<1xf32>
-// CHECK-NEXT:     %2 = stablehlo.minimum %1, %cst : tensor<1xf32>
-// CHECK-NEXT:     %3 = stablehlo.pad %2, %cst_1, low = [2], high = [24], interior = [0] : (tensor<1xf32>, tensor<f32>) -> tensor<27xf32>
-// CHECK-NEXT:     return %3 : tensor<27xf32>
-// CHECK-NEXT: }
+// CHECK-DAG: %[[ZERO:.+]] = stablehlo.constant dense<0.000000e+00> : tensor<f32>
+// CHECK-DAG: %[[BROADCAST:.+]] = stablehlo.constant dense<0.000000e+00> : tensor<1xf32>
+// CHECK-DAG: %[[INIT:.+]] = stablehlo.constant dense<0x7F800000> : tensor<f32>
+// CHECK: %[[RESHAPE:.+]] = stablehlo.reshape %arg0 : (tensor<3xf32>) -> tensor<1x3xf32>
+// CHECK: %[[RED:.+]] = stablehlo.reduce(%[[RESHAPE]] init: %[[INIT]]) applies stablehlo.minimum across dimensions = [1] : (tensor<1x3xf32>, tensor<f32>) -> tensor<1xf32>
+// CHECK: %[[FOLD:.+]] = stablehlo.minimum %[[RED]], %[[BROADCAST]] : tensor<1xf32>
+// CHECK: %[[PAD:.+]] = stablehlo.pad %[[FOLD]], %[[ZERO]], low = [2], high = [24], interior = [0] : (tensor<1xf32>, tensor<f32>) -> tensor<27xf32>
+// CHECK: return %[[PAD]] : tensor<27xf32>
+// CHECK: }
 
 module {
   func.func @main(%arg0: tensor<3xf32>) -> tensor<27xf32> {

@@ -4112,6 +4112,25 @@ struct ReducePad
                 (std::numeric_limits<int64_t>::max() >> (64 - width)))
           return failure();
       }
+      Type elementType = inputType.getElementType();
+      if (auto type = dyn_cast<ComplexType>(elementType))
+        elementType = type.getElementType();
+      if (auto type = dyn_cast<FloatType>(elementType)) {
+        // Rounding an integer exponent can change (-1)^count's sign.
+        // makeAttr also passes integer values through a double.
+        for (int64_t count : {paddedElements, paddedElements - inputElements}) {
+          llvm::APInt integer(64, count);
+          llvm::APFloat factor(type.getFloatSemantics());
+          llvm::APFloat doubleFactor(llvm::APFloat::IEEEdouble());
+          if (factor.convertFromAPInt(integer, false,
+                                      llvm::APFloat::rmNearestTiesToEven) !=
+                  llvm::APFloat::opOK ||
+              doubleFactor.convertFromAPInt(
+                  integer, false, llvm::APFloat::rmNearestTiesToEven) !=
+                  llvm::APFloat::opOK)
+            return failure();
+        }
+      }
     }
 
     auto foldPadding = [&](Value init, int64_t count) -> Value {
