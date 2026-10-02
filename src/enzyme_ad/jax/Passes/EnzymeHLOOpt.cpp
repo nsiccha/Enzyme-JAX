@@ -4104,6 +4104,16 @@ struct ReducePad
       inner.push_back(pad.getInteriorPadding()[en.index()]);
     }
 
+    if (checkCommonReduce.kind == stablehlo::ReduceOpKind::Mul) {
+      if (auto type = dyn_cast<IntegerType>(inputType.getElementType())) {
+        unsigned width = type.getWidth();
+        if (width < 64 &&
+            paddedElements >
+                (std::numeric_limits<int64_t>::max() >> (64 - width)))
+          return failure();
+      }
+    }
+
     auto foldPadding = [&](Value init, int64_t count) -> Value {
       if (!count)
         return init;

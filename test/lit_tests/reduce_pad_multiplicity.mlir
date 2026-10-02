@@ -101,3 +101,16 @@ func.func @empty_axis(%arg: tensor<1x0xf64>, %pv: tensor<f64>, %init: tensor<f64
 // CHECK: %[[R:.*]] = stablehlo.reduce(%arg0 init: %arg2) applies stablehlo.minimum across dimensions = [1]
 // CHECK-NOT: stablehlo.minimum %[[R]]
 // CHECK: stablehlo.pad %[[R]], %arg2, low = [0], high = [1], interior = [0]
+
+// A product exponent must fit the element type. Do not turn 128 copies of
+// an i8 value into a power with a wrapped, negative exponent.
+func.func @product_exponent_overflow(%arg: tensor<1x128xi8>, %pv: tensor<i8>, %init: tensor<i8>) -> tensor<2xi8> {
+  %p = stablehlo.pad %arg, %pv, low = [0, 0], high = [1, 0], interior = [0, 0] : (tensor<1x128xi8>, tensor<i8>) -> tensor<2x128xi8>
+  %r = stablehlo.reduce(%p init: %init) applies stablehlo.multiply across dimensions = [1] : (tensor<2x128xi8>, tensor<i8>) -> tensor<2xi8>
+  return %r : tensor<2xi8>
+}
+// CHECK-LABEL: func.func @product_exponent_overflow(
+// CHECK: %[[P:.*]] = stablehlo.pad %arg0, %arg1
+// CHECK: %[[R:.*]] = stablehlo.reduce(%[[P]] init: %arg2) applies stablehlo.multiply across dimensions = [1]
+// CHECK-NOT: stablehlo.power
+// CHECK: return %[[R]]
