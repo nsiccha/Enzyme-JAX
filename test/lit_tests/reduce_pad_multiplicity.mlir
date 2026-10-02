@@ -114,3 +114,41 @@ func.func @product_exponent_overflow(%arg: tensor<1x128xi8>, %pv: tensor<i8>, %i
 // CHECK: %[[R:.*]] = stablehlo.reduce(%[[P]] init: %arg2) applies stablehlo.multiply across dimensions = [1]
 // CHECK-NOT: stablehlo.power
 // CHECK: return %[[R]]
+
+// In f16, 2049 rounds to 2048. A product of 2049 copies of -1 is -1,
+// whereas power(-1, 2048) is +1. Retain the reduction when the exponent
+// cannot be represented exactly, including a complex element's real type.
+func.func @product_float_exponent_rounding(%arg: tensor<1x2049xf16>, %pv: tensor<f16>, %init: tensor<f16>) -> tensor<2xf16> {
+  %p = stablehlo.pad %arg, %pv, low = [0, 0], high = [1, 0], interior = [0, 0] : (tensor<1x2049xf16>, tensor<f16>) -> tensor<2x2049xf16>
+  %r = stablehlo.reduce(%p init: %init) applies stablehlo.multiply across dimensions = [1] : (tensor<2x2049xf16>, tensor<f16>) -> tensor<2xf16>
+  return %r : tensor<2xf16>
+}
+// CHECK-LABEL: func.func @product_float_exponent_rounding(
+// CHECK: %[[P:.*]] = stablehlo.pad %arg0, %arg1
+// CHECK: %[[R:.*]] = stablehlo.reduce(%[[P]] init: %arg2) applies stablehlo.multiply across dimensions = [1]
+// CHECK-NOT: stablehlo.power
+// CHECK: return %[[R]]
+
+// The full slice volume 2050 is exact in f16, but the 2049 missing elements
+// are not. Check the correction exponent as well as the output fill.
+func.func @product_missing_exponent_rounding(%arg: tensor<1x1xf16>, %pv: tensor<f16>, %init: tensor<f16>) -> tensor<2xf16> {
+  %p = stablehlo.pad %arg, %pv, low = [0, 0], high = [1, 2049], interior = [0, 0] : (tensor<1x1xf16>, tensor<f16>) -> tensor<2x2050xf16>
+  %r = stablehlo.reduce(%p init: %init) applies stablehlo.multiply across dimensions = [1] : (tensor<2x2050xf16>, tensor<f16>) -> tensor<2xf16>
+  return %r : tensor<2xf16>
+}
+// CHECK-LABEL: func.func @product_missing_exponent_rounding(
+// CHECK: %[[P:.*]] = stablehlo.pad %arg0, %arg1
+// CHECK: %[[R:.*]] = stablehlo.reduce(%[[P]] init: %arg2) applies stablehlo.multiply across dimensions = [1]
+// CHECK-NOT: stablehlo.power
+// CHECK: return %[[R]]
+
+func.func @product_complex_exponent_rounding(%arg: tensor<1x16777217xcomplex<f32>>, %pv: tensor<complex<f32>>, %init: tensor<complex<f32>>) -> tensor<2xcomplex<f32>> {
+  %p = stablehlo.pad %arg, %pv, low = [0, 0], high = [1, 0], interior = [0, 0] : (tensor<1x16777217xcomplex<f32>>, tensor<complex<f32>>) -> tensor<2x16777217xcomplex<f32>>
+  %r = stablehlo.reduce(%p init: %init) applies stablehlo.multiply across dimensions = [1] : (tensor<2x16777217xcomplex<f32>>, tensor<complex<f32>>) -> tensor<2xcomplex<f32>>
+  return %r : tensor<2xcomplex<f32>>
+}
+// CHECK-LABEL: func.func @product_complex_exponent_rounding(
+// CHECK: %[[P:.*]] = stablehlo.pad %arg0, %arg1
+// CHECK: %[[R:.*]] = stablehlo.reduce(%[[P]] init: %arg2) applies stablehlo.multiply across dimensions = [1]
+// CHECK-NOT: stablehlo.power
+// CHECK: return %[[R]]
