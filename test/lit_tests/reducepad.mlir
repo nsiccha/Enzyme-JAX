@@ -370,7 +370,7 @@ func.func @sum_promoted_reducer(%arg: tensor<1x3xf16>, %pv: tensor<f16>, %init: 
 }
 // REDUCE_PAD-LABEL: func.func @sum_promoted_reducer(
 // REDUCE_PAD: %[[P:.*]] = stablehlo.pad %arg0, %arg1
-// REDUCE_PAD: %[[R:.*]] = "stablehlo.reduce"(%[[P]], %arg2)
+// REDUCE_PAD: %[[R:.*]] = stablehlo.reduce(%[[P]] init: %arg2) across dimensions = [1]
 // REDUCE_PAD: stablehlo.add {{.*}} : tensor<f32>
 // REDUCE_PAD: return %[[R]] : tensor<2xf32>
 
