@@ -4084,6 +4084,23 @@ struct ReducePad
     auto paddedType = pad.getType();
     if (!inputType.hasStaticShape() || !paddedType.hasStaticShape())
       return failure();
+    Type elementType = inputType.getElementType();
+    if (getElementTypeOrSelf(op.getInitValues()[0]) != elementType ||
+        getElementTypeOrSelf(op.getResult(0)) != elementType ||
+        llvm::any_of(op.getBody().front().getArgumentTypes(), [&](Type type) {
+          return getElementTypeOrSelf(type) != elementType;
+        }))
+      return failure();
+
+    Attribute paddingAttr;
+    bool zeroPadding =
+        checkCommonReduce.kind == stablehlo::ReduceOpKind::Add &&
+        matchPattern(pad.getPaddingValue(), m_Constant(&paddingAttr)) &&
+        (matchPattern(paddingAttr, m_AnyZeroFloat()) ||
+         matchPattern(paddingAttr, m_AnyZeroComplex()) ||
+         matchPattern(paddingAttr, m_Zero()));
+    bool booleanAdd = checkCommonReduce.kind == stablehlo::ReduceOpKind::Add &&
+                      elementType.isInteger(1);
 
     SmallVector<int64_t> low, high, inner;
     int64_t inputElements = 1, paddedElements = 1;
@@ -4104,19 +4121,22 @@ struct ReducePad
       inner.push_back(pad.getInteriorPadding()[en.index()]);
     }
 
-    if (checkCommonReduce.kind == stablehlo::ReduceOpKind::Mul) {
-      if (auto type = dyn_cast<IntegerType>(inputType.getElementType())) {
+    if (checkCommonReduce.kind == stablehlo::ReduceOpKind::Mul ||
+        (checkCommonReduce.kind == stablehlo::ReduceOpKind::Add &&
+         !zeroPadding)) {
+      if (auto type = dyn_cast<IntegerType>(elementType);
+          type && checkCommonReduce.kind == stablehlo::ReduceOpKind::Mul) {
         unsigned width = type.getWidth();
         if (width < 64 &&
             paddedElements >
                 (std::numeric_limits<int64_t>::max() >> (64 - width)))
           return failure();
       }
-      Type elementType = inputType.getElementType();
-      if (auto type = dyn_cast<ComplexType>(elementType))
-        elementType = type.getElementType();
-      if (auto type = dyn_cast<FloatType>(elementType)) {
-        // Rounding an integer exponent can change (-1)^count's sign.
+      Type factorType = elementType;
+      if (auto type = dyn_cast<ComplexType>(factorType))
+        factorType = type.getElementType();
+      if (auto type = dyn_cast<FloatType>(factorType)) {
+        // Rounding a count can overflow an additive factor or change a power.
         // makeAttr also passes integer values through a double.
         for (int64_t count : {paddedElements, paddedElements - inputElements}) {
           llvm::APInt integer(64, count);
@@ -4134,20 +4154,35 @@ struct ReducePad
     }
 
     auto foldPadding = [&](Value init, int64_t count) -> Value {
-      if (!count)
+      if (!count || zeroPadding)
         return init;
       Value value = pad.getPaddingValue();
       if (count != 1 &&
-          (checkCommonReduce.kind == stablehlo::ReduceOpKind::Add ||
+          ((checkCommonReduce.kind == stablehlo::ReduceOpKind::Add &&
+            !booleanAdd) ||
            checkCommonReduce.kind == stablehlo::ReduceOpKind::Mul)) {
-        auto factor = stablehlo::ConstantOp::create(
-            rewriter, op.getLoc(), makeAttr(value.getType(), count));
-        if (checkCommonReduce.kind == stablehlo::ReduceOpKind::Add)
-          value =
-              stablehlo::MulOp::create(rewriter, op.getLoc(), value, factor);
-        else
-          value =
-              stablehlo::PowOp::create(rewriter, op.getLoc(), value, factor);
+        if (checkCommonReduce.kind == stablehlo::ReduceOpKind::Add &&
+            isa<ComplexType>(elementType)) {
+          auto real = stablehlo::RealOp::create(rewriter, op.getLoc(), value);
+          auto imag = stablehlo::ImagOp::create(rewriter, op.getLoc(), value);
+          auto factor = stablehlo::ConstantOp::create(
+              rewriter, op.getLoc(), makeAttr(real.getType(), count));
+          auto realScaled =
+              stablehlo::MulOp::create(rewriter, op.getLoc(), real, factor);
+          auto imagScaled =
+              stablehlo::MulOp::create(rewriter, op.getLoc(), imag, factor);
+          value = stablehlo::ComplexOp::create(rewriter, op.getLoc(),
+                                               realScaled, imagScaled);
+        } else {
+          auto factor = stablehlo::ConstantOp::create(
+              rewriter, op.getLoc(), makeAttr(value.getType(), count));
+          if (checkCommonReduce.kind == stablehlo::ReduceOpKind::Add)
+            value =
+                stablehlo::MulOp::create(rewriter, op.getLoc(), value, factor);
+          else
+            value =
+                stablehlo::PowOp::create(rewriter, op.getLoc(), value, factor);
+        }
       }
       return checkCommonReduce.createEquivalentOperation(rewriter, op.getLoc(),
                                                          init, value);
