@@ -23,16 +23,20 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace mlir::enzymexla;
 
-// Export control-flow requirements in the metadata XLA actually reads. An
+// Export structural requirements in the metadata XLA actually reads. An
 // Enzyme marker alone disappears at the StableHLO/HLO boundary, letting XLA
 // inline singleton loops and speculate a lazy conditional as an eager select.
-static void exportControlFlowRetention(Operation *op) {
+// Reductions and contractions must keep one region as their data shapes grow.
+static void exportStructureRetention(Operation *op) {
   StringRef name = op->getName().getStringRef();
   bool retainedLoop =
       (name == "stablehlo.while" || name == "mhlo.while") &&
       op->hasAttr(kPreserveLoopAttrName);
   bool lazyBranch = name == "stablehlo.if" || name == "mhlo.if";
-  if (!retainedLoop && !lazyBranch)
+  bool retainedReduction = name == "stablehlo.reduce" || name == "mhlo.reduce" ||
+                           name == "stablehlo.dot_general" ||
+                           name == "mhlo.dot_general" || name == "mhlo.dot";
+  if (!retainedLoop && !lazyBranch && !retainedReduction)
     return;
 
   NamedAttrList attrs(
@@ -46,6 +50,8 @@ static void exportControlFlowRetention(Operation *op) {
   }
   if (lazyBranch)
     attrs.set("xla_preserve_conditional", enabled);
+  if (retainedReduction)
+    attrs.set("xla_preserve_reduction", enabled);
   op->setAttr("mhlo.frontend_attributes",
               attrs.getDictionary(op->getContext()));
 }
@@ -133,7 +139,7 @@ struct DropUnsupportedAttributesPass
       });
     }
 
-    moduleOp->walk(exportControlFlowRetention);
+    moduleOp->walk(exportStructureRetention);
   }
 };
 

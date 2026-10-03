@@ -1,0 +1,149 @@
+diff --git a/xla/hlo/transforms/simplifiers/tree_reduction_rewriter.cc b/xla/hlo/transforms/simplifiers/tree_reduction_rewriter.cc
+--- a/xla/hlo/transforms/simplifiers/tree_reduction_rewriter.cc
++++ b/xla/hlo/transforms/simplifiers/tree_reduction_rewriter.cc
+@@ -46,6 +46,14 @@
+ 
+   absl::Status HandleReduce(HloInstruction* hlo) override {
+     if (filter_ && !filter_(hlo)) {
++      return absl::OkStatus();
++    }
++
++    // A frontend may require one reduction region independent of its data
++    // dimensions. Repeated tree rewriting otherwise adds a region per level.
++    const auto& attrs = hlo->frontend_attributes().map();
++    auto preserve = attrs.find("xla_preserve_reduction");
++    if (preserve != attrs.end() && preserve->second == "true") {
+       return absl::OkStatus();
+     }
+ 
+diff --git a/xla/hlo/transforms/simplifiers/BUILD b/xla/hlo/transforms/simplifiers/BUILD
+--- a/xla/hlo/transforms/simplifiers/BUILD
++++ b/xla/hlo/transforms/simplifiers/BUILD
+@@ -1996,6 +1996,17 @@
+     ],
+ )
+ 
++xla_cc_test(
++    name = "tree_reduction_retention_test",
++    srcs = ["tree_reduction_retention_test.cc"],
++    deps = [
++        ":tree_reduction_rewriter",
++        "//xla/hlo/ir:hlo",
++        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
++        "@com_google_googletest//:gtest_main",
++    ],
++)
++
+ cc_library(
+     name = "tree_reduction_rewriter",
+     srcs = ["tree_reduction_rewriter.cc"],
+diff --git a/xla/hlo/transforms/simplifiers/tree_reduction_retention_test.cc b/xla/hlo/transforms/simplifiers/tree_reduction_retention_test.cc
+new file mode 100644
+--- /dev/null
++++ b/xla/hlo/transforms/simplifiers/tree_reduction_retention_test.cc
+@@ -0,0 +1,105 @@
++#include <utility>
++
++#include "xla/hlo/transforms/simplifiers/tree_reduction_rewriter.h"
++
++#include "xla/hlo/ir/hlo_opcode.h"
++#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
++#include "gtest/gtest.h"
++
++namespace xla {
++namespace {
++
++class TreeReductionRetentionTest : public HloHardwareIndependentTestBase {};
++
++TEST_F(TreeReductionRetentionTest, PreservesMarkedReduction) {
++  auto module_or = ParseAndReturnVerifiedModule(R"hlo(HloModule reduction
++
++add {
++  lhs = f64[] parameter(0)
++  rhs = f64[] parameter(1)
++  ROOT sum = f64[] add(lhs, rhs)
++}
++
++ENTRY main {
++  input = f64[2048] parameter(0)
++  initial = f64[] constant(0)
++  ROOT result = f64[] reduce(input, initial), dimensions={0}, to_apply=add, frontend_attributes={xla_preserve_reduction="true"}
++}
++)hlo");
++  ASSERT_TRUE(module_or.ok()) << module_or.status();
++  auto module = std::move(module_or).value();
++  TreeReductionRewriter pass;
++  for (int iteration = 0; iteration < 2; ++iteration) {
++    auto changed = pass.Run(module.get());
++    ASSERT_TRUE(changed.ok()) << changed.status();
++    EXPECT_FALSE(changed.value());
++  }
++  int windows = 0;
++  for (const auto* instruction : module->entry_computation()->instructions()) {
++    windows += instruction->opcode() == HloOpcode::kReduceWindow;
++  }
++  EXPECT_EQ(windows, 0);
++}
++
++TEST_F(TreeReductionRetentionTest, OptimizesUnmarkedReduction) {
++  auto module_or = ParseAndReturnVerifiedModule(R"hlo(HloModule reduction
++
++add {
++  lhs = f64[] parameter(0)
++  rhs = f64[] parameter(1)
++  ROOT sum = f64[] add(lhs, rhs)
++}
++
++ENTRY main {
++  input = f64[2048] parameter(0)
++  initial = f64[] constant(0)
++  ROOT result = f64[] reduce(input, initial), dimensions={0}, to_apply=add
++}
++)hlo");
++  ASSERT_TRUE(module_or.ok()) << module_or.status();
++  auto module = std::move(module_or).value();
++  TreeReductionRewriter pass;
++  for (int iteration = 0; iteration < 2; ++iteration) {
++    auto changed = pass.Run(module.get());
++    ASSERT_TRUE(changed.ok()) << changed.status();
++    EXPECT_TRUE(changed.value());
++  }
++  int windows = 0;
++  for (const auto* instruction : module->entry_computation()->instructions()) {
++    windows += instruction->opcode() == HloOpcode::kReduceWindow;
++  }
++  EXPECT_EQ(windows, 2);
++}
++
++TEST_F(TreeReductionRetentionTest, OptimizesFalseRetention) {
++  auto module_or = ParseAndReturnVerifiedModule(R"hlo(HloModule reduction
++
++add {
++  lhs = f64[] parameter(0)
++  rhs = f64[] parameter(1)
++  ROOT sum = f64[] add(lhs, rhs)
++}
++
++ENTRY main {
++  input = f64[2048] parameter(0)
++  initial = f64[] constant(0)
++  ROOT result = f64[] reduce(input, initial), dimensions={0}, to_apply=add, frontend_attributes={xla_preserve_reduction="false"}
++}
++)hlo");
++  ASSERT_TRUE(module_or.ok()) << module_or.status();
++  auto module = std::move(module_or).value();
++  TreeReductionRewriter pass;
++  for (int iteration = 0; iteration < 2; ++iteration) {
++    auto changed = pass.Run(module.get());
++    ASSERT_TRUE(changed.ok()) << changed.status();
++    EXPECT_TRUE(changed.value());
++  }
++  int windows = 0;
++  for (const auto* instruction : module->entry_computation()->instructions()) {
++    windows += instruction->opcode() == HloOpcode::kReduceWindow;
++  }
++  EXPECT_EQ(windows, 2);
++}
++
++}  // namespace
++}  // namespace xla
