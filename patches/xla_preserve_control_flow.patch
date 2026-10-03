@@ -1,0 +1,106 @@
+--- a/xla/service/conditional_simplifier.cc
++++ b/xla/service/conditional_simplifier.cc
+@@ -459,6 +459,13 @@
+ absl::StatusOr<bool> ConditionalSimplifier::TryRemoveConditional(
+     HloInstruction* conditional) {
+   CHECK_EQ(conditional->opcode(), HloOpcode::kConditional);
++  // A frontend can require an authored conditional to remain lazy even when
++  // both branches are pure. Turning it into select would evaluate both arms.
++  const auto& attrs = conditional->frontend_attributes().map();
++  auto preserve = attrs.find("xla_preserve_conditional");
++  if (preserve != attrs.end() && preserve->second == "true") {
++    return false;
++  }
+   // Do not remove conditionals that contain side-effecting instructions or
+   // have control predecessors/successors in either true/false computation.
+   if (!conditional->parent()->IsSafelyRemovable(conditional) ||
+--- a/xla/service/conditional_code_motion.cc
++++ b/xla/service/conditional_code_motion.cc
+@@ -2224,6 +2224,13 @@
+   for (auto* comp : module->MakeComputationPostOrder(execution_threads)) {
+     for (auto* instr : comp->MakeInstructionPostOrder()) {
+       if (instr->opcode() == HloOpcode::kConditional) {
++        // Hoisting work out of a required lazy branch would execute it when
++        // its arm is inactive, even if the operation is otherwise pure.
++        const auto& attrs = instr->frontend_attributes().map();
++        auto preserve = attrs.find("xla_preserve_conditional");
++        if (preserve != attrs.end() && preserve->second == "true") {
++          continue;
++        }
+         int branch_count = instr->branch_count();
+         for (int i = 0; i < branch_count; ++i) {
+           HloComputation* branch_i = instr->branch_computation(i);
+--- a/xla/service/conditional_simplifier_test.cc
++++ b/xla/service/conditional_simplifier_test.cc
+@@ -119,6 +119,26 @@
+       computation->root_instruction(),
+       op::Select(op::Parameter(1), op::Add(op::Constant(), op::Constant()),
+                  op::Add(op::Parameter(0), op::Constant())));
++}
++
++TEST_F(ConditionalSimplifierTest, PreserveRequiredLazyConditional) {
++  auto m = CreateNewVerifiedModule();
++  HloComputation* computation = MakeConditional(m.get(), /*is_constant=*/false);
++  FrontendAttributes attrs;
++  (*attrs.mutable_map())["xla_preserve_conditional"] = "true";
++  computation->root_instruction()->set_frontend_attributes(attrs);
++  EXPECT_FALSE(ConditionalSimplifier().Run(m.get()).value());
++  EXPECT_EQ(computation->root_instruction()->opcode(), HloOpcode::kConditional);
++}
++
++TEST_F(ConditionalSimplifierTest, FalseRetentionKeepsNormalSimplification) {
++  auto m = CreateNewVerifiedModule();
++  HloComputation* computation = MakeConditional(m.get(), /*is_constant=*/false);
++  FrontendAttributes attrs;
++  (*attrs.mutable_map())["xla_preserve_conditional"] = "false";
++  computation->root_instruction()->set_frontend_attributes(attrs);
++  EXPECT_TRUE(ConditionalSimplifier().Run(m.get()).value());
++  EXPECT_THAT(computation->root_instruction(), op::Select());
+ }
+-
++
+ TEST_F(ConditionalSimplifierTest, RespectsUninlineableAttribute) {
+--- a/xla/service/conditional_code_motion_test.cc
++++ b/xla/service/conditional_code_motion_test.cc
+@@ -86,6 +86,41 @@
+   HloInstruction* root = module->entry_computation()->root_instruction();
+   EXPECT_THAT(root, AllOf(op::Tuple(op::Convert(), op::GetTupleElement())));
+ }
++TEST_F(ConditionalCodeMotionTest, PreserveRequiredLazyConditional) {
++  absl::string_view hlo_string = R"(
++HloModule PreserveRequiredLazyConditional
++
++on_true {
++  p = f32[2] parameter(0)
++  converted = f64[2] convert(p)
++  ROOT result = (f64[2], f32[2]) tuple(converted, p)
++}
++
++on_false {
++  p = f32[2] parameter(0)
++  sum = f32[2] add(p, p)
++  converted = f64[2] convert(p)
++  ROOT result = (f64[2], f32[2]) tuple(converted, sum)
++}
++
++ENTRY main {
++  pred = pred[] parameter(0)
++  true_arg = f32[2] parameter(1)
++  false_arg = f32[2] parameter(2)
++  conditional = (f64[2], f32[2]) conditional(pred, true_arg, false_arg), true_computation=on_true, false_computation=on_false, frontend_attributes={xla_preserve_conditional="true"}
++  first = f64[2] get-tuple-element(conditional), index=0
++  second = f32[2] get-tuple-element(conditional), index=1
++  ROOT result = (f64[2], f32[2]) tuple(first, second)
++}
++)";
++  auto module = ParseAndReturnVerifiedModule(hlo_string).value();
++  ConditionalCodeMotion pass(true, true);
++  EXPECT_FALSE(pass.Run(module.get()).value());
++  EXPECT_THAT(module->entry_computation()->root_instruction(),
++              op::Tuple(op::GetTupleElement(op::Conditional()),
++                        op::GetTupleElement(op::Conditional())));
++}
++
+ TEST_F(ConditionalCodeMotionTest, DoNotMoveLargeIntoOutfeed) {
+   absl::string_view hlo_string =
+       R"(

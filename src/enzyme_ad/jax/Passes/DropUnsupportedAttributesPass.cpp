@@ -2,6 +2,7 @@
 
 #include "src/enzyme_ad/jax/Dialect/Dialect.h"
 #include "src/enzyme_ad/jax/Dialect/Ops.h"
+#include "src/enzyme_ad/jax/Utils.h"
 
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
@@ -21,6 +22,31 @@ namespace enzyme {
 using namespace mlir;
 using namespace mlir::enzyme;
 using namespace mlir::enzymexla;
+
+// Export control-flow requirements in the metadata XLA actually reads. An
+// Enzyme marker alone disappears at the StableHLO/HLO boundary, letting XLA
+// inline singleton loops and speculate a lazy conditional as an eager select.
+static void exportControlFlowRetention(Operation *op) {
+  StringRef name = op->getName().getStringRef();
+  bool retainedLoop =
+      (name == "stablehlo.while" || name == "mhlo.while") &&
+      op->hasAttr(kPreserveLoopAttrName);
+  bool lazyBranch = name == "stablehlo.if" || name == "mhlo.if";
+  if (!retainedLoop && !lazyBranch)
+    return;
+
+  NamedAttrList attrs(
+      op->getAttrOfType<DictionaryAttr>("mhlo.frontend_attributes"));
+  auto enabled = StringAttr::get(op->getContext(), "true");
+  if (retainedLoop) {
+    attrs.set("skip-simplify-while-loops_trip-count-one", enabled);
+    attrs.set("xla_disable_while_loop_dce", enabled);
+  }
+  if (lazyBranch)
+    attrs.set("xla_preserve_conditional", enabled);
+  op->setAttr("mhlo.frontend_attributes",
+              attrs.getDictionary(op->getContext()));
+}
 
 struct RemoveMemoryEffectAttributes
     : public OpInterfaceRewritePattern<FunctionOpInterface> {
@@ -104,6 +130,8 @@ struct DropUnsupportedAttributesPass
         return WalkResult::advance();
       });
     }
+
+    moduleOp->walk(exportControlFlowRetention);
   }
 };
 
