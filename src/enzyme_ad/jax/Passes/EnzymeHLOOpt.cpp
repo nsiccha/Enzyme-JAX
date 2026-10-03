@@ -2956,6 +2956,8 @@ template <typename T> struct LICM : public CheckedOpRewritePattern<T, LICM<T>> {
     auto whileOp = op->template getParentOfType<stablehlo::WhileOp>();
     if (!whileOp)
       return failure();
+    if (containsCheckpointedLoop(whileOp))
+      return failure();
     for (auto operand : op->getOperands()) {
       if (!definedOutside(operand, whileOp))
         return failure();
@@ -2989,6 +2991,8 @@ struct LICMElementwise
   LogicalResult matchAndRewriteImpl(Operation *op,
                                     PatternRewriter &rewriter) const {
     if (!isa<stablehlo::WhileOp>(op->getParentOp()))
+      return failure();
+    if (containsCheckpointedLoop(op->getParentOp()))
       return failure();
     for (auto operand : op->getOperands()) {
       if (!definedOutside(operand, op->getParentOp()))
@@ -22224,6 +22228,8 @@ struct WhileLICM
 
   LogicalResult matchAndRewriteImpl(stablehlo::WhileOp op,
                                     PatternRewriter &rewriter) const {
+    if (containsCheckpointedLoop(op))
+      return failure();
     SmallVector<unsigned> operands;
 
     Block *cond = &op.getCond().front(), *body = &op.getBody().front();
