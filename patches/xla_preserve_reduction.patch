@@ -147,3 +147,124 @@ new file mode 100644
 +
 +}  // namespace
 +}  // namespace xla
+diff --git a/xla/backends/cpu/ynn_support.cc b/xla/backends/cpu/ynn_support.cc
+--- a/xla/backends/cpu/ynn_support.cc
++++ b/xla/backends/cpu/ynn_support.cc
+@@ -668,6 +668,17 @@
+ }
+ 
+ bool IsInstructionPreferredByYnn(const HloInstruction* instr) {
++  // Retained reductions must not gain a library-fusion region when an input
++  // crosses YNNPACK's size threshold. Keep them in the ordinary CPU pipeline.
++  if (instr->opcode() == HloOpcode::kReduce ||
++      instr->opcode() == HloOpcode::kReduceWindow ||
++      instr->opcode() == HloOpcode::kDot) {
++    const auto& attrs = instr->frontend_attributes().map();
++    auto preserve = attrs.find("xla_preserve_reduction");
++    if (preserve != attrs.end() && preserve->second == "true") {
++      return false;
++    }
++  }
+   if (instr->opcode() == HloOpcode::kDot ||
+       instr->opcode() == HloOpcode::kConvolution) {
+     // IsDotSupportedByYnn has its own check here.
+diff --git a/xla/backends/cpu/BUILD b/xla/backends/cpu/BUILD
+--- a/xla/backends/cpu/BUILD
++++ b/xla/backends/cpu/BUILD
+@@ -219,6 +219,18 @@
+     ],
+ )
+ 
++xla_cc_test(
++    name = "ynn_reduction_retention_test",
++    srcs = ["ynn_reduction_retention_test.cc"],
++    deps = [
++        ":ynn_support",
++        "//xla/hlo/ir:hlo",
++        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
++        "@com_google_absl//absl/strings",
++        "@com_google_googletest//:gtest_main",
++    ],
++)
++
+ cc_library(
+     name = "target_machine_options",
+     srcs = ["target_machine_options.cc"],
+diff --git a/xla/backends/cpu/ynn_reduction_retention_test.cc b/xla/backends/cpu/ynn_reduction_retention_test.cc
+new file mode 100644
+--- /dev/null
++++ b/xla/backends/cpu/ynn_reduction_retention_test.cc
+@@ -0,0 +1,73 @@
++#include <string>
++#include <tuple>
++#include <utility>
++
++#include "absl/strings/str_cat.h"
++#include "xla/backends/cpu/ynn_support.h"
++#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
++#include "gtest/gtest.h"
++
++namespace xla::cpu {
++namespace {
++
++class YnnReductionRetentionTest
++    : public HloHardwareIndependentTestBase,
++      public ::testing::WithParamInterface<std::tuple<int, std::string>> {};
++
++TEST_P(YnnReductionRetentionTest, ReductionPreferenceAcrossSizeThreshold) {
++  const auto& [size, retention] = GetParam();
++  const std::string attr = retention.empty()
++      ? "" : absl::StrCat(", frontend_attributes={xla_preserve_reduction=\"",
++                           retention, "\"}");
++  for (const std::string& operation : {"reduce", "reduce-window", "dot"}) {
++    SCOPED_TRACE(operation);
++    std::string root;
++    if (operation == "reduce") {
++      root = "ROOT result = f32[] reduce(input, initial), dimensions={0}, to_apply=add";
++    } else if (operation == "reduce-window") {
++      root = absl::StrCat("ROOT result = f32[", size - 1,
++          "] reduce-window(input, initial), window={size=2}, to_apply=add");
++    } else {
++      root = "ROOT result = f32[] dot(input, input), lhs_contracting_dims={0}, rhs_contracting_dims={0}";
++    }
++    auto module_or = ParseAndReturnVerifiedModule(absl::StrCat(R"hlo(
++HloModule retention
++add {
++  lhs = f32[] parameter(0)
++  rhs = f32[] parameter(1)
++  ROOT sum = f32[] add(lhs, rhs)
++}
++ENTRY main {
++  input = f32[)hlo", size, R"hlo(] parameter(0)
++  initial = f32[] constant(0)
++  )hlo", root, attr, "\n}\n"));
++    ASSERT_TRUE(module_or.ok()) << module_or.status();
++    auto module = std::move(module_or).value();
++    const bool expected = retention != "true" &&
++                          (operation == "dot" || size >= 4096);
++    EXPECT_EQ(IsInstructionPreferredByYnn(
++                  module->entry_computation()->root_instruction()), expected);
++  }
++}
++
++TEST_F(YnnReductionRetentionTest, OtherOperationsKeepSizePreference) {
++  auto module_or = ParseAndReturnVerifiedModule(R"hlo(
++HloModule other
++ENTRY main {
++  input = f32[4096] parameter(0)
++  ROOT result = f32[4096] negate(input), frontend_attributes={xla_preserve_reduction="true"}
++}
++)hlo");
++  ASSERT_TRUE(module_or.ok()) << module_or.status();
++  auto module = std::move(module_or).value();
++  EXPECT_TRUE(IsInstructionPreferredByYnn(
++      module->entry_computation()->root_instruction()));
++}
++
++INSTANTIATE_TEST_SUITE_P(
++    SizeAndAttribute, YnnReductionRetentionTest,
++    ::testing::Combine(::testing::Values(4095, 4096, 4097),
++                       ::testing::Values("", "false", "true")));
++
++}  // namespace
++}  // namespace xla::cpu
