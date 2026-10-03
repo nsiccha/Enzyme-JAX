@@ -1,8 +1,7 @@
 diff --git a/xla/hlo/transforms/simplifiers/tree_reduction_rewriter.cc b/xla/hlo/transforms/simplifiers/tree_reduction_rewriter.cc
 --- a/xla/hlo/transforms/simplifiers/tree_reduction_rewriter.cc
 +++ b/xla/hlo/transforms/simplifiers/tree_reduction_rewriter.cc
-@@ -46,6 +46,14 @@
- 
+@@ -47,4 +47,12 @@
    absl::Status HandleReduce(HloInstruction* hlo) override {
      if (filter_ && !filter_(hlo)) {
 +      return absl::OkStatus();
@@ -15,14 +14,10 @@ diff --git a/xla/hlo/transforms/simplifiers/tree_reduction_rewriter.cc b/xla/hlo
 +    if (preserve != attrs.end() && preserve->second == "true") {
        return absl::OkStatus();
      }
- 
 diff --git a/xla/hlo/transforms/simplifiers/BUILD b/xla/hlo/transforms/simplifiers/BUILD
 --- a/xla/hlo/transforms/simplifiers/BUILD
 +++ b/xla/hlo/transforms/simplifiers/BUILD
-@@ -1996,6 +1996,17 @@
-     ],
- )
- 
+@@ -1999,3 +1999,14 @@
 +xla_cc_test(
 +    name = "tree_reduction_retention_test",
 +    srcs = ["tree_reduction_retention_test.cc"],
@@ -150,9 +145,7 @@ new file mode 100644
 diff --git a/xla/backends/cpu/ynn_support.cc b/xla/backends/cpu/ynn_support.cc
 --- a/xla/backends/cpu/ynn_support.cc
 +++ b/xla/backends/cpu/ynn_support.cc
-@@ -668,6 +668,17 @@
- }
- 
+@@ -670,4 +670,15 @@
  bool IsInstructionPreferredByYnn(const HloInstruction* instr) {
 +  // Retained reductions must not gain a library-fusion region when an input
 +  // crosses YNNPACK's size threshold. Keep them in the ordinary CPU pipeline.
@@ -171,10 +164,7 @@ diff --git a/xla/backends/cpu/ynn_support.cc b/xla/backends/cpu/ynn_support.cc
 diff --git a/xla/backends/cpu/BUILD b/xla/backends/cpu/BUILD
 --- a/xla/backends/cpu/BUILD
 +++ b/xla/backends/cpu/BUILD
-@@ -219,6 +219,18 @@
-     ],
- )
- 
+@@ -222,3 +222,15 @@
 +xla_cc_test(
 +    name = "ynn_reduction_retention_test",
 +    srcs = ["ynn_reduction_retention_test.cc"],

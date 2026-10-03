@@ -53,10 +53,7 @@ diff --git a/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc b/xla/hlo/tr
 diff --git a/xla/hlo/transforms/simplifiers/BUILD b/xla/hlo/transforms/simplifiers/BUILD
 --- a/xla/hlo/transforms/simplifiers/BUILD
 +++ b/xla/hlo/transforms/simplifiers/BUILD
-@@ -2007,6 +2007,22 @@
-     ],
- )
- 
+@@ -2010,3 +2010,19 @@
 +xla_cc_test(
 +    name = "scatter_add_cost_test",
 +    srcs = ["scatter_add_cost_test.cc"],
