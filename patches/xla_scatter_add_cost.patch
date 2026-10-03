@@ -1,3 +1,29 @@
+diff --git a/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc b/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
+--- a/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
++++ b/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
+@@ -1170,9 +1170,6 @@
+         ShapeUtil::ElementsIn(rhs_scatter_update->shape()) +
+             ShapeUtil::ElementsIn(lhs_scatter_update->shape()) <
+         ShapeUtil::ElementsIn(lhs->shape());
+-    if (!update_concat_is_cheap) {
+-      return absl::OkStatus();
+-    }
+     const bool same_dimension_numbers =
+         lhs_dnums.index_vector_dim() == rhs_dnums.index_vector_dim() &&
+         absl::c_equal(lhs_dnums.scatter_dims_to_operand_dims(),
+@@ -1185,6 +1182,12 @@
+                       rhs_dnums.scatter_indices_batching_dims()) &&
+         absl::c_equal(lhs_dnums.input_batching_dims(),
+                       rhs_dnums.input_batching_dims());
++    // Only concatenation allocates combined index and update arrays. When
++    // dimension numbers differ, the fallback chains the existing scatters and
++    // should not be gated on the cost of a concatenation it cannot perform.
++    if (same_dimension_numbers && !update_concat_is_cheap) {
++      return absl::OkStatus();
++    }
+     const bool index_concat_is_safe =
+         !lhs->unique_indices() && !rhs->unique_indices() &&
+         !DynCast<HloScatterInstruction>(lhs)->indices_are_sorted() &&
 diff --git a/xla/hlo/transforms/simplifiers/BUILD b/xla/hlo/transforms/simplifiers/BUILD
 --- a/xla/hlo/transforms/simplifiers/BUILD
 +++ b/xla/hlo/transforms/simplifiers/BUILD
