@@ -28848,6 +28848,12 @@ struct UnaryElementwiseScatterSimplify final
   }
 };
 
+// Moving elementwise work across a gather according to its input/output sizes
+// changes the graph seen by AD. A frontend can require the authored order so
+// shape specialization does not introduce extra derivative work or regions.
+constexpr llvm::StringLiteral kPreserveGatherOrderAttrName =
+    "enzymexla.preserve_gather_order";
+
 struct GatherElementwise
     : public CheckedOpRewritePattern<stablehlo::GatherOp, GatherElementwise> {
   using CheckedOpRewritePattern<stablehlo::GatherOp,
@@ -28855,6 +28861,8 @@ struct GatherElementwise
 
   LogicalResult matchAndRewriteImpl(stablehlo::GatherOp op,
                                     PatternRewriter &rewriter) const {
+    if (op->hasAttr(kPreserveGatherOrderAttrName))
+      return failure();
     auto gatherInput = op.getOperand();
     auto defOp = gatherInput.getDefiningOp();
     if (!defOp || !hasTraitElementwise(defOp))
@@ -28916,6 +28924,8 @@ struct ElementwiseGather
       if (!defOp || !isOnlyUsedInOperation(defOp, op)) {
         return failure();
       }
+      if (defOp->hasAttr(kPreserveGatherOrderAttrName))
+        return failure();
 
       auto gatherOutType = cast<RankedTensorType>(defOp.getType());
       auto gatherInType = cast<RankedTensorType>(defOp.getOperand().getType());
