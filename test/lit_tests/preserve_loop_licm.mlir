@@ -1,5 +1,5 @@
 // RUN: enzymexlamlir-opt %s --enzyme-hlo-generate-td="patterns=elementwise_licm(0);slice_licm(0);while_licm(1)" --transform-interpreter --enzyme-hlo-remove-transform | FileCheck %s
-// RUN: enzymexlamlir-opt %s --enzyme-hlo-opt | FileCheck %s
+// RUN: enzymexlamlir-opt %s --enzyme-hlo-opt="licm_passes=true" | FileCheck %s
 
 // Invariant work belongs to a required retained body even if its operands are
 // defined outside: the loop may take zero trips. Unmarked loops keep LICM.
