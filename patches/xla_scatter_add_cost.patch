@@ -28,7 +28,7 @@ diff --git a/xla/hlo/transforms/simplifiers/scatter_add_cost_test.cc b/xla/hlo/t
 new file mode 100644
 --- /dev/null
 +++ b/xla/hlo/transforms/simplifiers/scatter_add_cost_test.cc
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,91 @@
 +#include <cstdint>
 +#include <string>
 +#include <tuple>
@@ -90,8 +90,7 @@ new file mode 100644
 +    if (!same_layout) index1.Set<int32_t>({i, 1}, i % 16);
 +    update1.Set<float>({i, 0, 0}, -0.5f * (i % 5));
 +  }
-+  HloEvaluator evaluator;
-+  auto before = evaluator.Evaluate(*module, {&index0, &index1, &update0, &update1});
++  auto before = HloEvaluator().Evaluate(*module, {&index0, &index1, &update0, &update1});
 +  ASSERT_TRUE(before.ok()) << before.status();
 +  AlgebraicSimplifierOptions options;
 +  AlgebraicSimplifier pass(options);
@@ -110,7 +109,7 @@ new file mode 100644
 +    // Preserve the existing cost policy when concatenation really is possible.
 +    EXPECT_EQ(root->opcode(), n == 16 ? HloOpcode::kScatter : HloOpcode::kAdd);
 +  }
-+  auto after = evaluator.Evaluate(*module, {&index0, &index1, &update0, &update1});
++  auto after = HloEvaluator().Evaluate(*module, {&index0, &index1, &update0, &update1});
 +  ASSERT_TRUE(after.ok()) << after.status();
 +  EXPECT_TRUE(LiteralTestUtil::Equal(before.value(), after.value()));
 +}
