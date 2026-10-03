@@ -42,7 +42,7 @@ module {
 
 // CHECK-LABEL: func.func @marked
 // CHECK-DAG: mhlo.frontend_attributes = {xla_preserve_conditional = "true"}
-// CHECK-DAG: mhlo.frontend_attributes = {client = "kept", "skip-simplify-while-loops_trip-count-one" = "true", xla_disable_while_loop_dce = "true"}
+// CHECK-DAG: mhlo.frontend_attributes = {_xla_disable_loop_instr_hoisting = "true", client = "kept", "skip-simplify-while-loops_trip-count-one" = "true", xla_disable_while_loop_dce = "true"}
 // CHECK-LABEL: func.func @unmarked
 // CHECK: stablehlo.while
 // CHECK-NOT: mhlo.frontend_attributes

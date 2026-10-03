@@ -41,6 +41,8 @@ static void exportControlFlowRetention(Operation *op) {
   if (retainedLoop) {
     attrs.set("skip-simplify-while-loops_trip-count-one", enabled);
     attrs.set("xla_disable_while_loop_dce", enabled);
+    // Invariant work must remain inactive when the loop takes zero trips.
+    attrs.set("_xla_disable_loop_instr_hoisting", enabled);
   }
   if (lazyBranch)
     attrs.set("xla_preserve_conditional", enabled);
