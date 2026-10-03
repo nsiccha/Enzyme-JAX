@@ -88,10 +88,10 @@ diff --git a/xla/service/conditional_code_motion_test.cc b/xla/service/condition
 +}
 +
 +ENTRY main {
-+  pred = pred[] parameter(0)
++  take_branch = pred[] parameter(0)
 +  true_arg = f32[2] parameter(1)
 +  false_arg = f32[2] parameter(2)
-+  conditional = (f64[2], f32[2]) conditional(pred, true_arg, false_arg), true_computation=on_true, false_computation=on_false, frontend_attributes={xla_preserve_conditional="true"}
++  conditional = (f64[2], f32[2]) conditional(take_branch, true_arg, false_arg), true_computation=on_true, false_computation=on_false, frontend_attributes={xla_preserve_conditional="true"}
 +  first = f64[2] get-tuple-element(conditional), index=0
 +  second = f32[2] get-tuple-element(conditional), index=1
 +  ROOT result = (f64[2], f32[2]) tuple(first, second)
