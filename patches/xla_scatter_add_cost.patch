@@ -1,0 +1,123 @@
+diff --git a/xla/hlo/transforms/simplifiers/BUILD b/xla/hlo/transforms/simplifiers/BUILD
+--- a/xla/hlo/transforms/simplifiers/BUILD
++++ b/xla/hlo/transforms/simplifiers/BUILD
+@@ -2007,6 +2007,22 @@
+     ],
+ )
+ 
++xla_cc_test(
++    name = "scatter_add_cost_test",
++    srcs = ["scatter_add_cost_test.cc"],
++    deps = [
++        ":algebraic_simplifier",
++        "//xla:literal",
++        "//xla:shape_util",
++        "//xla/hlo/evaluator:hlo_evaluator",
++        "//xla/hlo/ir:hlo",
++        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
++        "//xla/tests:literal_test_util",
++        "@com_google_absl//absl/strings",
++        "@com_google_googletest//:gtest_main",
++    ],
++)
++
+ cc_library(
+     name = "tree_reduction_rewriter",
+     srcs = ["tree_reduction_rewriter.cc"],
+diff --git a/xla/hlo/transforms/simplifiers/scatter_add_cost_test.cc b/xla/hlo/transforms/simplifiers/scatter_add_cost_test.cc
+new file mode 100644
+--- /dev/null
++++ b/xla/hlo/transforms/simplifiers/scatter_add_cost_test.cc
+@@ -0,0 +1,92 @@
++#include <cstdint>
++#include <string>
++#include <tuple>
++#include <utility>
++
++#include "absl/strings/str_cat.h"
++#include "xla/hlo/evaluator/hlo_evaluator.h"
++#include "xla/hlo/ir/hlo_opcode.h"
++#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
++#include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
++#include "xla/literal.h"
++#include "xla/shape_util.h"
++#include "xla/tests/literal_test_util.h"
++#include "gtest/gtest.h"
++
++namespace xla {
++namespace {
++
++class ScatterAddCostTest
++    : public HloHardwareIndependentTestBase,
++      public ::testing::WithParamInterface<std::tuple<int, bool>> {};
++
++TEST_P(ScatterAddCostTest, ConcatCostOnlyGatesCompatibleIndexLayouts) {
++  const auto [n, same_layout] = GetParam();
++  const int index_width = same_layout ? 1 : 2;
++  auto module_or = ParseAndReturnVerifiedModule(absl::StrCat(R"hlo(
++HloModule scatter_cost
++sum {
++  a = f32[] parameter(0)
++  b = f32[] parameter(1)
++  ROOT result = f32[] add(a, b)
++}
++ENTRY main {
++  zero = f32[] constant(0)
++  initial = f32[8,16] broadcast(zero), dimensions={}
++  index0 = s32[)hlo", 2 * n, R"hlo(,1] parameter(0)
++  index1 = s32[)hlo", n, ",", index_width, R"hlo(] parameter(1)
++  update0 = f32[)hlo", 2 * n, R"hlo(,1,1] parameter(2)
++  update1 = f32[)hlo", n, R"hlo(,1,1] parameter(3)
++  scatter0 = f32[8,16] scatter(initial, index0, update0), update_window_dims={1,2}, inserted_window_dims={}, scatter_dims_to_operand_dims={0}, index_vector_dim=1, to_apply=sum
++  scatter1 = f32[8,16] scatter(initial, index1, update1), update_window_dims={1,2}, inserted_window_dims={}, scatter_dims_to_operand_dims={)hlo",
++      same_layout ? "0" : "0,1", R"hlo(}, index_vector_dim=1, to_apply=sum
++  ROOT result = f32[8,16] add(scatter0, scatter1)
++}
++)hlo"));
++  ASSERT_TRUE(module_or.ok()) << module_or.status();
++  auto module = std::move(module_or).value();
++
++  auto index0 = Literal::CreateFromShape(ShapeUtil::MakeShape(S32, {2 * n, 1}));
++  auto index1 = Literal::CreateFromShape(ShapeUtil::MakeShape(S32, {n, index_width}));
++  auto update0 = Literal::CreateFromShape(ShapeUtil::MakeShape(F32, {2 * n, 1, 1}));
++  auto update1 = Literal::CreateFromShape(ShapeUtil::MakeShape(F32, {n, 1, 1}));
++  for (int i = 0; i < 2 * n; ++i) {
++    index0.Set<int32_t>({i, 0}, i % 8);
++    update0.Set<float>({i, 0, 0}, 0.25f * (i % 7));
++  }
++  for (int i = 0; i < n; ++i) {
++    index1.Set<int32_t>({i, 0}, i % 8);
++    if (!same_layout) index1.Set<int32_t>({i, 1}, i % 16);
++    update1.Set<float>({i, 0, 0}, -0.5f * (i % 5));
++  }
++  HloEvaluator evaluator;
++  auto before = evaluator.Evaluate(*module, {&index0, &index1, &update0, &update1});
++  ASSERT_TRUE(before.ok()) << before.status();
++  AlgebraicSimplifierOptions options;
++  AlgebraicSimplifier pass(options);
++  for (int iteration = 0; iteration < 2; ++iteration) {
++    auto changed = pass.Run(module.get());
++    ASSERT_TRUE(changed.ok()) << changed.status();
++  }
++
++  const auto* root = module->entry_computation()->root_instruction();
++  if (!same_layout) {
++    // Chaining uses the existing updates; it allocates no concatenated indices
++    // or updates and therefore does not depend on their size.
++    EXPECT_EQ(root->opcode(), HloOpcode::kScatter);
++    EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kScatter);
++  } else {
++    // Preserve the existing cost policy when concatenation really is possible.
++    EXPECT_EQ(root->opcode(), n == 16 ? HloOpcode::kScatter : HloOpcode::kAdd);
++  }
++  auto after = evaluator.Evaluate(*module, {&index0, &index1, &update0, &update1});
++  ASSERT_TRUE(after.ok()) << after.status();
++  EXPECT_TRUE(LiteralTestUtil::Equal(before.value(), after.value()));
++}
++
++INSTANTIATE_TEST_SUITE_P(
++    SizeAndIndexLayout, ScatterAddCostTest,
++    ::testing::Combine(::testing::Values(16, 64), ::testing::Bool()));
++
++}  // namespace
++}  // namespace xla
