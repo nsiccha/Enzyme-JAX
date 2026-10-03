@@ -121,4 +121,3 @@ func.func @sine_first_n256_retained(%x: tensor<128xf64>, %i: tensor<256x1xi64>) 
 // CHECK: stablehlo.sine
 // CHECK-NEXT: {{.*}}stablehlo.gather
 // CHECK-NEXT: return
-
