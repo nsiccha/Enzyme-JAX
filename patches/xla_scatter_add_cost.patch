@@ -1,7 +1,21 @@
 diff --git a/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc b/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
 --- a/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
 +++ b/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
-@@ -1170,9 +1170,6 @@
+@@ -1098,6 +1098,13 @@
+                      Match(rhs->to_apply()->root_instruction(),
+                            m::Add(m::Parameter(), m::Parameter()));
+   if (rhs_scatter && lhs_scatter) {
++    const auto preserves_scatter_region = [](const HloInstruction* scatter) {
++      const auto& attrs = scatter->frontend_attributes().map();
++      auto preserve = attrs.find("xla_preserve_scatter");
++      return preserve != attrs.end() && preserve->second == "true";
++    };
++    const bool preserve_regions = preserves_scatter_region(lhs) ||
++                                  preserves_scatter_region(rhs);
+     const auto& lhs_dnums = lhs->scatter_dimension_numbers();
+     const auto& rhs_dnums = rhs->scatter_dimension_numbers();
+     std::optional<int64_t> index_concat_dimension;
+@@ -1170,9 +1177,6 @@
          ShapeUtil::ElementsIn(rhs_scatter_update->shape()) +
              ShapeUtil::ElementsIn(lhs_scatter_update->shape()) <
          ShapeUtil::ElementsIn(lhs->shape());
@@ -11,19 +25,31 @@ diff --git a/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc b/xla/hlo/tr
      const bool same_dimension_numbers =
          lhs_dnums.index_vector_dim() == rhs_dnums.index_vector_dim() &&
          absl::c_equal(lhs_dnums.scatter_dims_to_operand_dims(),
-@@ -1185,6 +1182,12 @@
+@@ -1185,6 +1189,13 @@
                        rhs_dnums.scatter_indices_batching_dims()) &&
          absl::c_equal(lhs_dnums.input_batching_dims(),
                        rhs_dnums.input_batching_dims());
 +    // Only concatenation allocates combined index and update arrays. When
 +    // dimension numbers differ, the fallback chains the existing scatters and
 +    // should not be gated on the cost of a concatenation it cannot perform.
-+    if (same_dimension_numbers && !update_concat_is_cheap) {
++    if (!preserve_regions && same_dimension_numbers &&
++        !update_concat_is_cheap) {
 +      return absl::OkStatus();
 +    }
      const bool index_concat_is_safe =
          !lhs->unique_indices() && !rhs->unique_indices() &&
          !DynCast<HloScatterInstruction>(lhs)->indices_are_sorted() &&
+@@ -1201,7 +1212,9 @@
+         },
+         rhs_scatter_update->shape());
+     // Concatenate the indices and updates
+-    if (index_concat_is_safe && same_dimension_numbers &&
++    // Keep each explicitly retained update region. Chaining preserves both
++    // bodies; concatenation would merge them according to the data sizes.
++    if (!preserve_regions && index_concat_is_safe && same_dimension_numbers &&
+         index_concat_dimension &&
+         lhs_scatter_index->shape().element_type() ==
+             rhs_scatter_index->shape().element_type() &&
 diff --git a/xla/hlo/transforms/simplifiers/BUILD b/xla/hlo/transforms/simplifiers/BUILD
 --- a/xla/hlo/transforms/simplifiers/BUILD
 +++ b/xla/hlo/transforms/simplifiers/BUILD
@@ -54,7 +80,7 @@ diff --git a/xla/hlo/transforms/simplifiers/scatter_add_cost_test.cc b/xla/hlo/t
 new file mode 100644
 --- /dev/null
 +++ b/xla/hlo/transforms/simplifiers/scatter_add_cost_test.cc
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,98 @@
 +#include <cstdint>
 +#include <string>
 +#include <tuple>
@@ -75,11 +101,16 @@ new file mode 100644
 +
 +class ScatterAddCostTest
 +    : public HloHardwareIndependentTestBase,
-+      public ::testing::WithParamInterface<std::tuple<int, bool>> {};
++      public ::testing::WithParamInterface<std::tuple<int, bool, std::string>> {};
 +
 +TEST_P(ScatterAddCostTest, ConcatCostOnlyGatesCompatibleIndexLayouts) {
-+  const auto [n, same_layout] = GetParam();
++  const auto [n, same_layout, retention] = GetParam();
 +  const int index_width = same_layout ? 1 : 2;
++  const bool preserve = retention == "true" || retention == "left";
++  const std::string attr0 = retention.empty() ? "" : absl::StrCat(
++      ", frontend_attributes={xla_preserve_scatter=\"",
++      retention == "left" ? "true" : retention, "\"}");
++  const std::string attr1 = retention == "left" ? "" : attr0;
 +  auto module_or = ParseAndReturnVerifiedModule(absl::StrCat(R"hlo(
 +HloModule scatter_cost
 +sum {
@@ -94,9 +125,9 @@ new file mode 100644
 +  index1 = s32[)hlo", n, ",", index_width, R"hlo(] parameter(1)
 +  update0 = f32[)hlo", 2 * n, R"hlo(,1,1] parameter(2)
 +  update1 = f32[)hlo", n, R"hlo(,1,1] parameter(3)
-+  scatter0 = f32[8,16] scatter(initial, index0, update0), update_window_dims={1,2}, inserted_window_dims={}, scatter_dims_to_operand_dims={0}, index_vector_dim=1, to_apply=sum
++  scatter0 = f32[8,16] scatter(initial, index0, update0), update_window_dims={1,2}, inserted_window_dims={}, scatter_dims_to_operand_dims={0}, index_vector_dim=1, to_apply=sum)hlo", attr0, R"hlo(
 +  scatter1 = f32[8,16] scatter(initial, index1, update1), update_window_dims={1,2}, inserted_window_dims={}, scatter_dims_to_operand_dims={)hlo",
-+      same_layout ? "0" : "0,1", R"hlo(}, index_vector_dim=1, to_apply=sum
++      same_layout ? "0" : "0,1", R"hlo(}, index_vector_dim=1, to_apply=sum)hlo", attr1, R"hlo(
 +  ROOT result = f32[8,16] add(scatter0, scatter1)
 +}
 +)hlo"));
@@ -126,9 +157,10 @@ new file mode 100644
 +  }
 +
 +  const auto* root = module->entry_computation()->root_instruction();
-+  if (!same_layout) {
++  if (preserve || !same_layout) {
 +    // Chaining uses the existing updates; it allocates no concatenated indices
-+    // or updates and therefore does not depend on their size.
++    // or updates and therefore does not depend on their size. Explicit
++    // retention keeps both scatter regions even for compatible layouts.
 +    EXPECT_EQ(root->opcode(), HloOpcode::kScatter);
 +    EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kScatter);
 +  } else {
@@ -142,7 +174,8 @@ new file mode 100644
 +
 +INSTANTIATE_TEST_SUITE_P(
 +    SizeAndIndexLayout, ScatterAddCostTest,
-+    ::testing::Combine(::testing::Values(16, 64), ::testing::Bool()));
++    ::testing::Combine(::testing::Values(16, 64), ::testing::Bool(),
++                       ::testing::Values("", "false", "true", "left")));
 +
 +}  // namespace
 +}  // namespace xla

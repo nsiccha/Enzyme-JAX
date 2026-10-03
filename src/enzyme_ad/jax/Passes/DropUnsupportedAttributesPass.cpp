@@ -26,7 +26,8 @@ using namespace mlir::enzymexla;
 // Export structural requirements in the metadata XLA actually reads. An
 // Enzyme marker alone disappears at the StableHLO/HLO boundary, letting XLA
 // inline singleton loops and speculate a lazy conditional as an eager select.
-// Reductions and contractions must keep one region as their data shapes grow.
+// Reductions, contractions and indexed updates retain their regions as data
+// shapes grow.
 static void exportStructureRetention(Operation *op) {
   StringRef name = op->getName().getStringRef();
   bool retainedLoop =
@@ -36,7 +37,8 @@ static void exportStructureRetention(Operation *op) {
   bool retainedReduction = name == "stablehlo.reduce" || name == "mhlo.reduce" ||
                            name == "stablehlo.dot_general" ||
                            name == "mhlo.dot_general" || name == "mhlo.dot";
-  if (!retainedLoop && !lazyBranch && !retainedReduction)
+  bool retainedScatter = name == "stablehlo.scatter" || name == "mhlo.scatter";
+  if (!retainedLoop && !lazyBranch && !retainedReduction && !retainedScatter)
     return;
 
   NamedAttrList attrs(
@@ -52,6 +54,8 @@ static void exportStructureRetention(Operation *op) {
     attrs.set("xla_preserve_conditional", enabled);
   if (retainedReduction)
     attrs.set("xla_preserve_reduction", enabled);
+  if (retainedScatter)
+    attrs.set("xla_preserve_scatter", enabled);
   op->setAttr("mhlo.frontend_attributes",
               attrs.getDictionary(op->getContext()));
 }
