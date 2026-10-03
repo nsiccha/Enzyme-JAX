@@ -6,6 +6,7 @@
 #include "Enzyme/MLIR/Interfaces/GradientUtilsReverse.h"
 #include "Enzyme/MLIR/Passes/EnzymeBatchPass.h"
 #include "Enzyme/MLIR/Passes/RemovalUtils.h"
+#include "src/enzyme_ad/jax/Utils.h"
 
 #include "stablehlo/dialect/StablehloOps.h"
 
@@ -175,6 +176,9 @@ inline LogicalResult genericCreateBatch(Operation *src, OpBuilder &builder,
   }
 
   auto whileOp = WhileOp::create(builder, src->getLoc(), whileOperands);
+  // Batch dimensions come from tensor shapes. Retain the scalar body even
+  // when shape specialization makes a small batch eligible for unrolling.
+  whileOp->setAttr(kPreserveLoopAttrName, builder.getUnitAttr());
 
   auto whileCond = new Block();
   auto whileBody = new Block();

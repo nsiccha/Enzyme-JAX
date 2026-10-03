@@ -494,6 +494,29 @@ inline bool isOrContainsCheckpointSegmentLoop(mlir::Operation *op) {
       .wasInterrupted();
 }
 
+/// A frontend can require a loop to remain control flow even when shape
+/// specialization makes its trip count constant. Materializing iterations
+/// would make the program size depend on the input shape.
+constexpr llvm::StringLiteral kPreserveLoopAttrName = "enzymexla.preserve_loop";
+
+inline void copyLoopRetention(mlir::Operation *from, mlir::Operation *to) {
+  if (auto attr = from->getAttr(kPreserveLoopAttrName))
+    to->setAttr(kPreserveLoopAttrName, attr);
+}
+
+/// Enclosing a retained loop must also prevent iteration materialization:
+/// unrolling the enclosing loop would duplicate the retained body.
+inline bool isOrContainsPreservedLoop(mlir::Operation *op) {
+  return op
+      ->walk([](mlir::Operation *nested) {
+        return nested->hasAttr(kPreserveLoopAttrName) ||
+                       isCheckpointSegmentLoop(nested)
+                   ? mlir::WalkResult::interrupt()
+                   : mlir::WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
 /// Get bounds attribute from IR. Bounds are stored as ArrayAttr with two
 /// IntegerAttr elements [min, max] under the attribute name "enzymexla.bounds".
 /// Returns nullopt if the attribute is not found or malformed.

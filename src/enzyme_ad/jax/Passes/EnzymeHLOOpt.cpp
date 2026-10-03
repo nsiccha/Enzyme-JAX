@@ -32290,6 +32290,11 @@ struct RemoveNoOpsFromWhileLoop
 
   LogicalResult matchAndRewriteImpl(stablehlo::WhileOp whileOp,
                                     PatternRewriter &rewriter) const {
+    // Shape-derived bounds must not specialize away the conditional body of
+    // a retained loop, including loops with a single iteration.
+    if (whileOp->hasAttr(kPreserveLoopAttrName))
+      return rewriter.notifyMatchFailure(whileOp, "retained loop");
+
     auto info = WhileLoopInfo(whileOp);
     auto computeInfoSuccess = info.computeInfo();
     if (computeInfoSuccess.failed()) {

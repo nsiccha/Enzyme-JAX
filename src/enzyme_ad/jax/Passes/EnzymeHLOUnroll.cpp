@@ -55,7 +55,7 @@ LogicalResult unrollWhileOp(mlir::stablehlo::WhileOp op, RewriterBase &rewriter,
   // Unrolling a checkpoint segment loop makes every iteration of the segment
   // live at once, which is what the checkpointing was paying recompute to
   // avoid. See markCheckpointSegmentLoop.
-  if (isOrContainsCheckpointSegmentLoop(op))
+  if (isOrContainsPreservedLoop(op))
     return failure();
 
   WhileLoopInfo info(op);

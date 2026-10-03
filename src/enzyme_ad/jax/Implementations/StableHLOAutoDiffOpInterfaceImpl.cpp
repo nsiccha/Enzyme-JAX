@@ -1356,6 +1356,7 @@ public:
 
     auto revWhile = WhileOp::create(builder, orig->getLoc(),
                                     ValueRange(operands).getTypes(), operands);
+    copyLoopRetention(orig, revWhile);
     auto &condReg = revWhile.getCond();
     auto &bodyReg = revWhile.getBody();
 
@@ -1561,6 +1562,7 @@ public:
 
       auto newnewWhile = WhileOp::create(revBuilder, orig->getLoc(),
                                          resultTypes, newWhile->getOperands());
+      copyLoopRetention(newWhile, newnewWhile);
       newnewWhile.getCond().takeBody(newWhile.getCond());
       newnewWhile.getBody().takeBody(newWhile.getBody());
 
@@ -3625,6 +3627,7 @@ public:
     auto numInitArgs = whileOp->getNumOperands();
     auto newWhile =
         stablehlo::WhileOp::create(rewriter, op->getLoc(), newOperands);
+    copyLoopRetention(whileOp, newWhile);
 
     newWhile.getCond().takeBody(whileOp.getCond());
     newWhile.getBody().takeBody(whileOp.getBody());
@@ -3715,6 +3718,7 @@ public:
       rewriter.setInsertionPoint(otherWhileOp);
       auto newOtherWhileOp = stablehlo::WhileOp::create(
           rewriter, otherWhileOp->getLoc(), operands);
+      copyLoopRetention(otherWhileOp, newOtherWhileOp);
 
       for (auto &&[res, newRes] : llvm::zip(otherWhileOp->getResults(),
                                             newOtherWhileOp->getResults())) {
@@ -3741,14 +3745,11 @@ public:
 
       Value cache = info.initOp.getResult();
 
+      // Use the actual tape type built in step 3. An AD shadow of width one
+      // preserves the value's type, whereas a one-iteration tape still adds
+      // a leading axis. Nested caches must preserve each of those axes.
       auto newType =
-          cast<ShapedType>(cast<AutoDiffTypeInterface>(info.cachedType())
-                               .getShadowType(numIters));
-      // Must match step 3: use 1D cache type for scalar so dynamic_update_slice
-      // is valid.
-      if (newType.getRank() == 0) {
-        newType = RankedTensorType::get({numIters}, newType.getElementType());
-      }
+          cast<ShapedType>(newWhile->getResult(resultIdx).getType());
       enzyme::InitOp newInit = ({
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(info.initOp);
