@@ -57,6 +57,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/Support/MathExtras.h"
 
 #include "llvm/ADT/MapVector.h"
 #include <cmath>
@@ -11996,7 +11997,8 @@ sliceDotGeneralHelper(stablehlo::DotGeneralOp dot, ArrayRef<int64_t> starts,
     rhs_lb[rhs] = starts[residx];
     rhs_ub[rhs] = limits[residx];
     rhs_step[rhs] = strides[residx];
-    resShape.push_back((limits[residx] - starts[residx]) / strides[residx]);
+    resShape.push_back(llvm::divideCeilSigned(limits[residx] - starts[residx],
+                                            strides[residx]));
     residx++;
   }
 
@@ -12010,7 +12012,8 @@ sliceDotGeneralHelper(stablehlo::DotGeneralOp dot, ArrayRef<int64_t> starts,
     lhs_lb[i] = starts[residx];
     lhs_ub[i] = limits[residx];
     lhs_step[i] = strides[residx];
-    resShape.push_back((limits[residx] - starts[residx]) / strides[residx]);
+    resShape.push_back(llvm::divideCeilSigned(limits[residx] - starts[residx],
+                                            strides[residx]));
     residx++;
   }
 
@@ -12024,7 +12027,8 @@ sliceDotGeneralHelper(stablehlo::DotGeneralOp dot, ArrayRef<int64_t> starts,
     rhs_lb[i] = starts[residx];
     rhs_ub[i] = limits[residx];
     rhs_step[i] = strides[residx];
-    resShape.push_back((limits[residx] - starts[residx]) / strides[residx]);
+    resShape.push_back(llvm::divideCeilSigned(limits[residx] - starts[residx],
+                                            strides[residx]));
     residx++;
   }
 
