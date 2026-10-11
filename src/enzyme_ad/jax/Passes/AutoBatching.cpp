@@ -1609,8 +1609,8 @@ LogicalResult GreedyWhileLoopBatchFission::matchAndRewriteImpl(
   // divides the trip count evenly (LoopCheckpointing::segmentLength returns the
   // constant nInner rather than a select), so without this guard peak memory
   // silently depends on that divisibility.
-  if (isOrContainsCheckpointSegmentLoop(whileOp))
-    return rewriter.notifyMatchFailure(whileOp, "checkpoint segment loop");
+  if (isOrContainsCheckpointedLoop(whileOp))
+    return rewriter.notifyMatchFailure(whileOp, "checkpointed loop");
 
   auto info = WhileLoopInfo(whileOp);
   auto computeInfoSuccess = info.computeInfo();
@@ -2556,8 +2556,8 @@ mlir::LogicalResult WhileElementwiseReductionToReduce::matchAndRewriteImpl(
     stablehlo::WhileOp whileOp, PatternRewriter &rewriter) const {
   // Same reasoning as GreedyWhileLoopBatchFission: lifting the reduction
   // materializes every iteration of the segment at once.
-  if (isOrContainsCheckpointSegmentLoop(whileOp))
-    return rewriter.notifyMatchFailure(whileOp, "checkpoint segment loop");
+  if (isOrContainsCheckpointedLoop(whileOp))
+    return rewriter.notifyMatchFailure(whileOp, "checkpointed loop");
 
   auto &body = whileOp.getBody().front();
   auto term = body.getTerminator();
@@ -3600,6 +3600,10 @@ static Value emitReduction(PatternRewriter &rewriter, Location loc,
 
 LogicalResult ParallelWhileToBatchedScatter::matchAndRewriteImpl(
     stablehlo::WhileOp whileOp, PatternRewriter &rewriter) const {
+  // Parallel writes still materialize the entire iteration space. A requested
+  // checkpoint loop must remain available to AD before this conversion too.
+  if (isOrContainsCheckpointedLoop(whileOp))
+    return rewriter.notifyMatchFailure(whileOp, "checkpointed loop");
   if (!whileOp->hasAttr("enzymexla.parallel"))
     return failure();
   enzyme::WhileLoopInfo info(whileOp);

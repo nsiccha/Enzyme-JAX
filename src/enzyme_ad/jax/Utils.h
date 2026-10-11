@@ -474,7 +474,19 @@ inline bool isCheckpointSegmentLoop(mlir::Operation *op) {
   return op->hasAttr(kCheckpointSegmentAttrName);
 }
 
-/// True if `op` is a checkpoint-segment loop, or encloses one.
+/// True if checkpointing was requested on `op`, or AD has already made it a
+/// checkpoint-segment loop. The request has to protect the primal loop before
+/// differentiation too: expanding it first removes the loop that AD needs to
+/// checkpoint.
+inline bool isCheckpointedLoop(mlir::Operation *op) {
+  if (isCheckpointSegmentLoop(op))
+    return true;
+  auto enabled =
+      op->getAttrOfType<mlir::BoolAttr>("enzyme.enable_checkpointing");
+  return enabled && enabled.getValue();
+}
+
+/// True if `op` is a checkpointed loop, or encloses one.
 ///
 /// The mark is not guaranteed to survive on every loop of the scaffold. A
 /// rewrite that has to widen a loop -- to carry the checkpoint snapshots out,
@@ -487,13 +499,13 @@ inline bool isCheckpointSegmentLoop(mlir::Operation *op) {
 /// This is deliberately conservative: it also covers a user loop that happens
 /// to wrap a checkpointed region, where fission would undo the checkpointing
 /// just as thoroughly.
-inline bool isOrContainsCheckpointSegmentLoop(mlir::Operation *op) {
-  if (isCheckpointSegmentLoop(op))
+inline bool isOrContainsCheckpointedLoop(mlir::Operation *op) {
+  if (isCheckpointedLoop(op))
     return true;
   return op
       ->walk([](mlir::Operation *nested) {
-        return isCheckpointSegmentLoop(nested) ? mlir::WalkResult::interrupt()
-                                               : mlir::WalkResult::advance();
+        return isCheckpointedLoop(nested) ? mlir::WalkResult::interrupt()
+                                         : mlir::WalkResult::advance();
       })
       .wasInterrupted();
 }

@@ -52,10 +52,10 @@ LogicalResult unrollWhileOp(mlir::stablehlo::WhileOp op, RewriterBase &rewriter,
                             SmallVectorImpl<Value> *replacements,
                             int64_t maxBoundedIterations, bool boundedGuardIf) {
 
-  // Unrolling a checkpoint segment loop makes every iteration of the segment
-  // live at once, which is what the checkpointing was paying recompute to
-  // avoid. See markCheckpointSegmentLoop.
-  if (isOrContainsCheckpointSegmentLoop(op))
+  // A checkpoint request must retain the primal loop before AD can build its
+  // bounded tape. After AD, unrolling a segment would undo that memory bound.
+  // See isCheckpointedLoop.
+  if (isOrContainsCheckpointedLoop(op))
     return failure();
 
   WhileLoopInfo info(op);

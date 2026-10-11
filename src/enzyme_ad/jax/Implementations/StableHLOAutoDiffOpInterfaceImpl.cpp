@@ -22,6 +22,7 @@
 #include "mlir/Analysis/TopologicalSortUtils.h"
 
 #include "llvm/ADT/PointerUnion.h"
+#include "llvm/ADT/ScopeExit.h"
 
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
@@ -851,8 +852,10 @@ public:
                                      stablehlo::WhileOp op,
                                      MGradientUtilsReverse *gutils) {
     WhileLoopInfo info = getLoopInfo(op);
-    return gutils->originalToNewFn.lookupOrDefault(
-        info.getNumIters(builder, gutils->originalToNewFn));
+    // getNumIters already maps its original operands and emits a fresh value
+    // in this builder. Mapping that result again can hit a stale key whose
+    // erased allocation has been reused for the new operation.
+    return info.getNumIters(builder, gutils->originalToNewFn);
   }
 
   static int64_t getConstantStart(stablehlo::WhileOp op) {
@@ -1056,9 +1059,10 @@ public:
           gutils->zeroDiffe(res, builder);
   }
 
-  // The outside refs are immutable tensors popped from caches, private to the
-  // replay: an op visited after the loop must still see the caller's value.
-  static bool publishesCopiedSeeds() { return false; }
+  // Child reverse rules must see the immutable tensors popped for this replay.
+  // createReverseModeAdjoint restores their previous bindings when this loop's
+  // reverse finishes, so sibling operations still see the caller's values.
+  static bool publishesCopiedSeeds() { return true; }
 
   // The reverse body zeroes nothing up front -- every gradient slot a body op
   // touches is created inside the replayed segment, and the loop-carried one
@@ -1294,6 +1298,20 @@ public:
     // LoopCheckpointing::cachePeriodic / cacheBinomial), so it has to be
     // dispatched before any of `caches` is read as a trip count below.
     if (needsCheckpointing(whileOp) || needsBinomialCheckpointing(whileOp)) {
+      SetVector<Value> outsideRefs;
+      getUsedValuesDefinedAbove(whileOp->getRegions(), outsideRefs);
+      SmallVector<std::pair<Value, Value>> savedOutsideMappings;
+      for (Value ref : outsideRefs)
+        savedOutsideMappings.emplace_back(
+            ref, gutils->originalToNewFn.lookupOrNull(ref));
+      auto restoreOutsideMappings = llvm::scope_exit([&] {
+        for (auto [ref, previous] : savedOutsideMappings) {
+          if (previous)
+            gutils->originalToNewFn.map(ref, previous);
+          else
+            gutils->originalToNewFn.erase(ref);
+        }
+      });
       // The shared code indexes iteration arguments without the induction
       // variable, which -- being an integer counter -- is never active.
       assert(!operandsActive[0] &&
@@ -1521,8 +1539,7 @@ public:
         // Non-constant, non-binomial: fall through to numIters caching below.
       }
 
-      numIters = gutils->originalToNewFn.lookupOrDefault(
-          info.getNumIters(revBuilder, gutils->originalToNewFn));
+      numIters = info.getNumIters(revBuilder, gutils->originalToNewFn);
     }
 
     if (!numIters) {
