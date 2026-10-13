@@ -503,6 +503,22 @@ def ApplySliceBroadcastPatterns : EnzymeHLOPatternOp<
     "slice_broadcast"> {
   let patterns = ["SliceBroadcast"];
 }
+def SliceIota : EnzymeHLOPatternOp<
+    "slice_iota"> {
+  let patterns = ["SliceIota"];
+}
+def ApplySliceGatherPatterns : EnzymeHLOPatternOp<
+    "slice_gather"> {
+  let patterns = ["SliceGather"];
+}
+def ApplyTransposeGatherPatterns : EnzymeHLOPatternOp<
+    "transpose_gather"> {
+  let patterns = ["TransposeGather"];
+}
+def ApplyTransposeScatterPatterns : EnzymeHLOPatternOp<
+    "transpose_scatter"> {
+  let patterns = ["TransposeScatter"];
+}
 def ApplyReducePadPatterns : EnzymeHLOPatternOp<
     "reduce_pad"> {
   let patterns = ["ReducePad"];
@@ -780,9 +796,19 @@ def ApplyCommonAssociativeCommutativeOpReorderPatterns : EnzymeHLOPatternOp<
   let patterns = ["CommonAssociativeCommutativeOpReorder"];
 }
 
-def ApplyTransposeElementwiseTransposeAbsPatterns : EnzymeHLOPatternOp<
+def ApplyTransposeElementwiseTransposeAbsPatterns : EnzymeHLOParameterizedPatternOp<
     "transpose_elementwise_transpose"> {
-  let patterns = ["TransposeElementwiseTransposeSimplify"];
+  let arguments = (ins OptionalAttr<I64Attr>:$benefit, BoolAttr:$parameter);
+  let assemblyFormat = "prop-dict attr-dict";
+  // TODO: this should be made better searchable.
+  let extraClassDeclaration = [{
+    ::llvm::SmallVector<::mlir::DictionaryAttr>
+    static getPossibleAttrCombinations(::mlir::Builder &builder) {
+      return {builder.getDictionaryAttr(
+                  builder.getNamedAttr("parameter",
+                                       builder.getBoolAttr(true)))};
+    }
+  }];
 }
 
 def TransposeBroadcastInDimToBroadcastInDimPatterns : EnzymeHLOPatternOp<
@@ -1266,6 +1292,11 @@ def TransposeIsReshapePatterns : EnzymeHLOPatternOp<
 def IfRemoveUnused : EnzymeHLOPatternOp<
     "if_remove_unused"> {
   let patterns = ["IfRemoveUnused"];
+}
+
+def CaseRemoveUnused : EnzymeHLOPatternOp<
+    "case_remove_unused"> {
+  let patterns = ["CaseRemoveUnused"];
 }
 
 def IfInline : EnzymeHLOPatternOp<
@@ -1845,6 +1876,21 @@ def ApplyScatterIndicesAreUniquePatterns : EnzymeHLOPatternOp<
   let patterns = ["ScatterIndicesAreUnique"];
 }
 
+def ApplyScatterOutOfBoundsNoopPatterns : EnzymeHLOPatternOp<
+    "scatter_out_of_bounds_noop"> {
+  let patterns = ["ScatterOutOfBoundsNoop"];
+}
+
+def ApplyGatherOfMaskedScatterPatterns : EnzymeHLOPatternOp<
+    "gather_of_masked_scatter"> {
+  let patterns = ["GatherOfMaskedScatter"];
+}
+
+def ApplyGatherOfBroadcastBatchingDimsPatterns : EnzymeHLOPatternOp<
+    "gather_of_broadcast_batching_dims"> {
+  let patterns = ["GatherOfBroadcastBatchingDims"];
+}
+
 def ApplyReduceTransposeSimplifyPatterns : EnzymeHLOPatternOp<
     "reduce_transpose_simplify"> {
   let patterns = ["ReduceTransposeSimplify"];
@@ -1977,6 +2023,11 @@ def TransposeConcatPatterns : EnzymeHLOPatternOp<
   "transpose_concat"
 > {
   let patterns = ["TransposeConcat"];
+}
+
+def TransposeLikeBroadcastConcatPatterns
+    : EnzymeHLOPatternOp<"transpose_like_broadcast_concat"> {
+  let patterns = ["TransposeLikeBroadcastConcat"];
 }
 
 def TransposeIotaPatterns : EnzymeHLOPatternOp<
@@ -2159,6 +2210,11 @@ def ConcatConcatToDUS : EnzymeHLOPatternOp<
 def WhileInductionReduction : EnzymeHLOPatternOp<
     "while_induction_reduction"> {
   let patterns = ["WhileInductionReduction"];
+}
+
+def WhileSliceElementwiseCarry : EnzymeHLOPatternOp<
+    "while_slice_elementwise_carry"> {
+  let patterns = ["WhileSliceElementwiseCarry"];
 }
 
 def SinkDUS : EnzymeHLOPatternOp<
@@ -2599,6 +2655,10 @@ def ConcatWrap : EnzymeHLOPatternOp<
   let patterns = ["ConcatWrap"];
 }
 
+def ConcatRotate : EnzymeHLOPatternOp<"concat_rotate"> {
+  let patterns = ["ConcatRotate"];
+}
+
 def WidenWrap : EnzymeHLOPatternOp<
     "widen_wrap"> {
   let patterns = ["WidenWrap"];
@@ -2617,6 +2677,10 @@ def ConcatConcatAxisSwap : EnzymeHLOPatternOp<
 def RotatePad : EnzymeHLOPatternOp<
     "rotate_pad"> {
   let patterns = ["RotatePad"];
+}
+
+def RotateRotate : EnzymeHLOPatternOp<"rotate_rotate"> {
+  let patterns = ["RotateRotate"];
 }
 
 def ConcatToOneDimDUS : EnzymeHLOPatternOp<

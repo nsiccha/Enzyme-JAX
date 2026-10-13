@@ -147,6 +147,22 @@ module {
   // CHECK-NEXT:   %1 = stablehlo.reshape %0 : (tensor<2x1xf64>) -> tensor<1x2xf64>
   // CHECK-NEXT:   return %1 : tensor<1x2xf64>
   // CHECK-NEXT: }
+
+  func.func @reshape_slice_backtrack_after_inserted_unit_dims(%arg0: tensor<3x1x2048x2048xf64>) -> tensor<1x1x1x3x1x2032xf64> {
+    %c0 = stablehlo.constant dense<0> : tensor<i64>
+    %c8 = stablehlo.constant dense<8> : tensor<i64>
+    %0 = stablehlo.dynamic_slice %arg0, %c0, %c0, %c8, %c8, sizes = [3, 1, 1, 2032] : (tensor<3x1x2048x2048xf64>, tensor<i64>, tensor<i64>, tensor<i64>, tensor<i64>) -> tensor<3x1x1x2032xf64>
+    %1 = stablehlo.reshape %0 : (tensor<3x1x1x2032xf64>) -> tensor<1x1x1x3x1x2032xf64>
+    return %1 : tensor<1x1x1x3x1x2032xf64>
+  }
+
+  // CHECK: func.func @reshape_slice_backtrack_after_inserted_unit_dims(%arg0: tensor<3x1x2048x2048xf64>) -> tensor<1x1x1x3x1x2032xf64> {
+  // CHECK-NEXT:   %c = stablehlo.constant dense<0> : tensor<i64>
+  // CHECK-NEXT:   %c_0 = stablehlo.constant dense<8> : tensor<i64>
+  // CHECK-NEXT:   %0 = stablehlo.reshape %arg0 : (tensor<3x1x2048x2048xf64>) -> tensor<1x1x1x3x2048x2048xf64>
+  // CHECK-NEXT:   %1 = stablehlo.dynamic_slice %0, %c, %c, %c, %c, %c_0, %c_0, sizes = [1, 1, 1, 3, 1, 2032] : (tensor<1x1x1x3x2048x2048xf64>, tensor<i64>, tensor<i64>, tensor<i64>, tensor<i64>, tensor<i64>, tensor<i64>) -> tensor<1x1x1x3x1x2032xf64>
+  // CHECK-NEXT:   return %1 : tensor<1x1x1x3x1x2032xf64>
+  // CHECK-NEXT: }
 }
 
 module {

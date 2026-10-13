@@ -522,12 +522,13 @@ static void addBaseTransformPasses(std::vector<std::string> &list,
   list.push_back("compare_select_simplify");
   list.push_back("while_simplify<1>(1)");
   list.push_back("if_remove_unused");
+  list.push_back("case_remove_unused");
   list.push_back("transpose_reshape_to_broadcast");
   list.push_back("reshape_transpose_to_broadcast");
   list.push_back("dus_dus");
   list.push_back("dus_dus_concat");
   list.push_back("abs_positive_simplify");
-  list.push_back("transpose_elementwise_transpose");
+  list.push_back("transpose_elementwise_transpose(1)");
   list.push_back("select_comp_iota_const_simplify");
   list.push_back("sign_abs_simplify<1>");
   list.push_back("broadcastindim_is_reshape");
@@ -546,7 +547,10 @@ static void addBaseTransformPasses(std::vector<std::string> &list,
   list.push_back("sink_dus");
   list.push_back("hoist_slice");
   list.push_back("while_induction_reduction");
+  list.push_back("while_slice_elementwise_carry");
   list.push_back("slice_broadcast");
+  list.push_back("slice_iota");
+  list.push_back("slice_gather");
   list.push_back("associative_common_mul_op_reordering");
   list.push_back("slice_select_to_select_slice");
   list.push_back("slice_if");
@@ -554,6 +558,7 @@ static void addBaseTransformPasses(std::vector<std::string> &list,
   list.push_back("slice_extend");
   list.push_back("slice_of_updatewithoutcorners");
   list.push_back("concat_wrap");
+  list.push_back("concat_rotate");
   list.push_back("cse_updatewithoutcorners<16>");
   list.push_back("cse_extend<16>");
   list.push_back("cse_wrap<16>");
@@ -688,6 +693,9 @@ static void addScatterGatherPasses(std::vector<std::string> &list,
   list.push_back("scatter_div_simplify");
   list.push_back("unary_elementwise_scatter_simplify");
   list.push_back("scatter_indices_are_unique");
+  list.push_back("scatter_out_of_bounds_noop");
+  list.push_back("gather_of_masked_scatter");
+  list.push_back("gather_of_broadcast_batching_dims");
   list.push_back("scatter_masked_index_slice");
   list.push_back("scatter_masked_index_simplify");
   list.push_back("split_complex_scatter");
@@ -817,6 +825,7 @@ static void addPadPasses(std::vector<std::string> &list,
   list.push_back("while_pad_induction_reduction");
   list.push_back("pad_concat_to_concat_pad");
   list.push_back("rotate_pad");
+  list.push_back("rotate_rotate");
   list.push_back("concat_multipad");
   list.push_back("speculate_if_pad_to_select");
   list.push_back("dus_to_dynamic_pad");
@@ -934,6 +943,7 @@ static void addTransposePropagateUpPasses(std::vector<std::string> &list,
   list.push_back("transpose_slice");
   list.push_back("transpose_like_broadcast_slice");
   list.push_back("transpose_concat");
+  list.push_back("transpose_like_broadcast_concat");
   list.push_back("transpose_iota");
   list.push_back("transpose_reduce");
   list.push_back("transpose_reduce_window");
@@ -944,6 +954,8 @@ static void addTransposePropagateUpPasses(std::vector<std::string> &list,
   list.push_back("transpose_extend");
   list.push_back("transpose_rotate");
   list.push_back("transpose_dynamic_slice");
+  list.push_back("transpose_gather");
+  list.push_back("transpose_scatter");
   list.push_back("transpose_like_broadcast_dynamic_slice");
   list.push_back("transpose_reverse");
   list.push_back("transpose_batch_norm_training");

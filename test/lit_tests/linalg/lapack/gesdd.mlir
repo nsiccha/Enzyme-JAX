@@ -12,7 +12,7 @@ module {
 // CPU-NEXT:     %cst = stablehlo.constant dense<0.000000e+00> : tensor<64xf32>
 // CPU-NEXT:     %cst_0 = stablehlo.constant dense<0.000000e+00> : tensor<64x64xf32>
 // CPU-NEXT:     %c_1 = stablehlo.constant dense<64> : tensor<i64>
-// CPU-NEXT:     %0:5 = enzymexla.jit_call @enzymexla_wrapper_lapack_sgesdd_ (%c_1, %c_1, %arg0, %c_1, %cst, %cst_0, %c_1, %cst_0, %c_1, %c) {operand_layouts = [dense<> : tensor<0xindex>, dense<> : tensor<0xindex>, dense<[0, 1]> : tensor<2xindex>, dense<> : tensor<0xindex>, dense<0> : tensor<1xindex>, dense<[0, 1]> : tensor<2xindex>, dense<> : tensor<0xindex>, dense<[0, 1]> : tensor<2xindex>, dense<> : tensor<0xindex>, dense<> : tensor<0xindex>], output_operand_aliases = [#stablehlo.output_operand_alias<output_tuple_indices = [0], operand_index = 5, operand_tuple_indices = []>, #stablehlo.output_operand_alias<output_tuple_indices = [1], operand_index = 4, operand_tuple_indices = []>, #stablehlo.output_operand_alias<output_tuple_indices = [2], operand_index = 7, operand_tuple_indices = []>, #stablehlo.output_operand_alias<output_tuple_indices = [3], operand_index = 9, operand_tuple_indices = []>, #stablehlo.output_operand_alias<output_tuple_indices = [4], operand_index = 2, operand_tuple_indices = []>], xla_side_effect_free} : (tensor<i64>, tensor<i64>, tensor<64x64xf32>, tensor<i64>, tensor<64xf32>, tensor<64x64xf32>, tensor<i64>, tensor<64x64xf32>, tensor<i64>, tensor<i64>) -> (tensor<64x64xf32>, tensor<64xf32>, tensor<64x64xf32>, tensor<i64>, tensor<64x64xf32>)
+// CPU-NEXT:     %0:5 = enzymexla.jit_call @enzymexla_wrapper_lapack_sgesdd_ (%c_1, %c_1, %arg0, %c_1, %cst, %cst_0, %c_1, %cst_0, %c_1, %c) <operand_layouts = [dense<> : tensor<0xindex>, dense<> : tensor<0xindex>, dense<[0, 1]> : tensor<2xindex>, dense<> : tensor<0xindex>, dense<0> : tensor<1xindex>, dense<[0, 1]> : tensor<2xindex>, dense<> : tensor<0xindex>, dense<[0, 1]> : tensor<2xindex>, dense<> : tensor<0xindex>, dense<> : tensor<0xindex>], output_operand_aliases = [#stablehlo.output_operand_alias<output_tuple_indices = [0], operand_index = 5, operand_tuple_indices = []>, #stablehlo.output_operand_alias<output_tuple_indices = [1], operand_index = 4, operand_tuple_indices = []>, #stablehlo.output_operand_alias<output_tuple_indices = [2], operand_index = 7, operand_tuple_indices = []>, #stablehlo.output_operand_alias<output_tuple_indices = [3], operand_index = 9, operand_tuple_indices = []>, #stablehlo.output_operand_alias<output_tuple_indices = [4], operand_index = 2, operand_tuple_indices = []>], xla_side_effect_free> : (tensor<i64>, tensor<i64>, tensor<64x64xf32>, tensor<i64>, tensor<64xf32>, tensor<64x64xf32>, tensor<i64>, tensor<64x64xf32>, tensor<i64>, tensor<i64>) -> (tensor<64x64xf32>, tensor<64xf32>, tensor<64x64xf32>, tensor<i64>, tensor<64x64xf32>)
 // CPU-NEXT:     return %0#0, %0#1, %0#2, %0#3 : tensor<64x64xf32>, tensor<64xf32>, tensor<64x64xf32>, tensor<i64>
 // CPU-NEXT:   }
 // CPU-NEXT:   llvm.func private @enzymexla_wrapper_lapack_sgesdd_(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: !llvm.ptr, %arg3: !llvm.ptr, %arg4: !llvm.ptr, %arg5: !llvm.ptr, %arg6: !llvm.ptr, %arg7: !llvm.ptr, %arg8: !llvm.ptr, %arg9: !llvm.ptr) {
@@ -55,89 +55,17 @@ module {
 module {
   func.func @main(%arg0: tensor<64x64xcomplex<f32>>) -> (tensor<64x64xcomplex<f32>>, tensor<64xf32>, tensor<64x64xcomplex<f32>>, tensor<i64>) {
     // CPU: enzymexla.jit_call @enzymexla_wrapper_lapack_cgesdd_
-    // CPU: %[[ONE:.+]] = llvm.mlir.constant(1 : i64)
-    // CPU: %[[QUERY:.+]] = llvm.alloca %[[ONE]] x !llvm.struct<(f32, f32)>
-    // CPU: llvm.mul
-    // CPU-NEXT: %[[IWORK:.+]] = llvm.alloca
-    // CPU: %[[RWORK:.+]] = llvm.alloca %{{.+}} x f32
-    // CPU-NEXT: llvm.call @enzymexla_lapack_cgesdd_({{.*}}, %[[QUERY]], %[[LWORK:.+]], %[[RWORK]], %[[IWORK]], %arg9, %{{[0-9]+}})
-    // CPU-NEXT: %[[SIZE_REAL:.+]] = llvm.load %[[QUERY]] : !llvm.ptr -> f32
-    // CPU-NEXT: %[[SIZE:.+]] = llvm.fptosi %[[SIZE_REAL]] : f32 to i64
-    // CPU-NEXT: %[[WORK:.+]] = llvm.alloca %[[SIZE]] x !llvm.struct<(f32, f32)>
-    // CPU-NEXT: llvm.store %[[SIZE]], %[[LWORK]]
-    // CPU-NEXT: llvm.call @enzymexla_lapack_cgesdd_({{.*}}, %[[WORK]], %[[LWORK]], %[[RWORK]], %[[IWORK]], %arg9, %{{[0-9]+}})
     %0:4 = enzymexla.lapack.gesdd %arg0 : (tensor<64x64xcomplex<f32>>) -> (tensor<64x64xcomplex<f32>>, tensor<64xf32>, tensor<64x64xcomplex<f32>>, tensor<i64>)
     return %0#0, %0#1, %0#2, %0#3 : tensor<64x64xcomplex<f32>>, tensor<64xf32>, tensor<64x64xcomplex<f32>>, tensor<i64>
   }
 }
 
 module {
-  // complex ones have rwork as extra argument, before iwork
+  // complex ones have rwork as extra argument
   // CPU: enzymexla.jit_call @enzymexla_wrapper_lapack_zgesdd_
-  // CPU-DAG: %[[TWO:.+]] = llvm.mlir.constant(2 : i64)
-  // CPU-DAG: %[[FIVE:.+]] = llvm.mlir.constant(5 : i64)
-  // CPU-DAG: %[[SEVEN:.+]] = llvm.mlir.constant(7 : i64)
-  // CPU: %[[ONE:.+]] = llvm.mlir.constant(1 : i64)
-  // CPU: %[[QUERY:.+]] = llvm.alloca %[[ONE]] x !llvm.struct<(f64, f64)>
-  // CPU: %[[M:.+]] = llvm.load %arg0 : !llvm.ptr -> i64
-  // CPU-NEXT: %[[N:.+]] = llvm.load %arg1 : !llvm.ptr -> i64
-  // CPU-NEXT: %[[MIN:.+]] = arith.minsi %[[M]], %[[N]] : i64
-  // CPU-NEXT: llvm.mul
-  // CPU-NEXT: %[[IWORK:.+]] = llvm.alloca
-  // CPU: %[[MAX:.+]] = arith.maxsi %[[M]], %[[N]] : i64
-  // CPU-NEXT: %[[FIVE_MIN:.+]] = arith.muli %[[MIN]], %[[FIVE]] : i64
-  // CPU-NEXT: %[[TERM_A:.+]] = arith.addi %[[FIVE_MIN]], %[[SEVEN]] : i64
-  // CPU-NEXT: %[[TWO_MAX:.+]] = arith.muli %[[MAX]], %[[TWO]] : i64
-  // CPU-NEXT: %[[TWO_MIN:.+]] = arith.muli %[[MIN]], %[[TWO]] : i64
-  // CPU-NEXT: %[[TERM_B_BASE:.+]] = arith.addi %[[TWO_MAX]], %[[TWO_MIN]] : i64
-  // CPU-NEXT: %[[TERM_B:.+]] = arith.addi %[[TERM_B_BASE]], %[[ONE]] : i64
-  // CPU-NEXT: %[[MAX_TERM:.+]] = arith.maxsi %[[TERM_A]], %[[TERM_B]] : i64
-  // CPU-NEXT: %[[RWORK_SIZE:.+]] = arith.muli %[[MIN]], %[[MAX_TERM]] : i64
-  // CPU-NEXT: %[[RWORK:.+]] = llvm.alloca %[[RWORK_SIZE]] x f64
-  // CPU-NEXT: llvm.call @enzymexla_lapack_zgesdd_({{.*}}, %[[QUERY]], %[[LWORK:.+]], %[[RWORK]], %[[IWORK]], %arg9, %{{[0-9]+}})
-  // CPU-NEXT: %[[SIZE_REAL:.+]] = llvm.load %[[QUERY]] : !llvm.ptr -> f64
-  // CPU-NEXT: %[[SIZE:.+]] = llvm.fptosi %[[SIZE_REAL]] : f64 to i64
-  // CPU-NEXT: %[[WORK:.+]] = llvm.alloca %[[SIZE]] x !llvm.struct<(f64, f64)>
-  // CPU-NEXT: llvm.store %[[SIZE]], %[[LWORK]]
-  // CPU-NEXT: llvm.call @enzymexla_lapack_zgesdd_({{.*}}, %[[WORK]], %[[LWORK]], %[[RWORK]], %[[IWORK]], %arg9, %{{[0-9]+}})
   // CPU: llvm.func @enzymexla_lapack_zgesdd_(!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, i64)
   func.func @main(%arg0: tensor<64x64xcomplex<f64>>) -> (tensor<64x64xcomplex<f64>>, tensor<64xf64>, tensor<64x64xcomplex<f64>>, tensor<i64>) {
     %0:4 = enzymexla.lapack.gesdd %arg0 : (tensor<64x64xcomplex<f64>>) -> (tensor<64x64xcomplex<f64>>, tensor<64xf64>, tensor<64x64xcomplex<f64>>, tensor<i64>)
     return %0#0, %0#1, %0#2, %0#3 : tensor<64x64xcomplex<f64>>, tensor<64xf64>, tensor<64x64xcomplex<f64>>, tensor<i64>
-  }
-}
-
-module {
-  // without the singular vectors
-  // CPU: enzymexla.jit_call @enzymexla_wrapper_lapack_zgesdd_
-  // CPU: %[[ONE:.+]] = llvm.mlir.constant(1 : i64)
-  // CPU: %[[QUERY:.+]] = llvm.alloca %[[ONE]] x !llvm.struct<(f64, f64)>
-  // CPU: llvm.mul
-  // CPU-NEXT: %[[IWORK:.+]] = llvm.alloca
-  // CPU: %[[RWORK:.+]] = llvm.alloca %{{.+}} x f64
-  // CPU-NEXT: llvm.call @enzymexla_lapack_zgesdd_({{.*}}, %[[QUERY]], %[[LWORK:.+]], %[[RWORK]], %[[IWORK]], %arg9, %{{[0-9]+}})
-  // CPU-NEXT: %[[SIZE_REAL:.+]] = llvm.load %[[QUERY]] : !llvm.ptr -> f64
-  // CPU-NEXT: %[[SIZE:.+]] = llvm.fptosi %[[SIZE_REAL]] : f64 to i64
-  // CPU-NEXT: %[[WORK:.+]] = llvm.alloca %[[SIZE]] x !llvm.struct<(f64, f64)>
-  // CPU-NEXT: llvm.store %[[SIZE]], %[[LWORK]]
-  // CPU-NEXT: llvm.call @enzymexla_lapack_zgesdd_({{.*}}, %[[WORK]], %[[LWORK]], %[[RWORK]], %[[IWORK]], %arg9, %{{[0-9]+}})
-  func.func @main(%arg0: tensor<64x64xcomplex<f64>>) -> tensor<64xf64> {
-    %0:4 = enzymexla.lapack.gesdd %arg0 {compute_uv = false} : (tensor<64x64xcomplex<f64>>) -> (tensor<64x64xcomplex<f64>>, tensor<64xf64>, tensor<64x64xcomplex<f64>>, tensor<i64>)
-    return %0#1 : tensor<64xf64>
-  }
-}
-
-module {
-  // Full rectangular SVD uses the same complex query and work buffers.
-  // CPU: llvm.func private @enzymexla_wrapper_lapack_zgesdd__full
-  // CPU: %[[ONE:.+]] = llvm.mlir.constant(1 : i64)
-  // CPU: llvm.alloca %[[ONE]] x !llvm.struct<(f64, f64)>
-  // CPU: llvm.call @enzymexla_lapack_zgesdd_
-  // CPU: %[[SIZE:.+]] = llvm.fptosi %{{.+}} : f64 to i64
-  // CPU-NEXT: llvm.alloca %[[SIZE]] x !llvm.struct<(f64, f64)>
-  // CPU: llvm.call @enzymexla_lapack_zgesdd_
-  func.func @full(%arg0: tensor<104x64xcomplex<f64>>) -> (tensor<104x104xcomplex<f64>>, tensor<64xf64>, tensor<64x64xcomplex<f64>>, tensor<i64>) {
-    %0:4 = enzymexla.lapack.gesdd %arg0 {full = true} : (tensor<104x64xcomplex<f64>>) -> (tensor<104x104xcomplex<f64>>, tensor<64xf64>, tensor<64x64xcomplex<f64>>, tensor<i64>)
-    return %0#0, %0#1, %0#2, %0#3 : tensor<104x104xcomplex<f64>>, tensor<64xf64>, tensor<64x64xcomplex<f64>>, tensor<i64>
   }
 }

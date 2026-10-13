@@ -1269,18 +1269,15 @@ struct LowerCommMpiWaitallOpToJIT
               .getResult();
 
       for (int i = 0; i < num_requests; ++i) {
+        auto request = LLVM::LoadOp::create(rewriter, op.getLoc(), type_ptr,
+                                            entryBlock->getArgument(i));
         auto gep_op =
             LLVM::GEPOp::create(rewriter, op.getLoc(), type_ptr, type_ptr,
                                 array_of_requests, ValueRange{});
         gep_op.setRawConstantIndices({i});
-        LLVM::StoreOp::create(rewriter, op.getLoc(), entryBlock->getArgument(i),
+        LLVM::StoreOp::create(rewriter, op.getLoc(), request,
                               gep_op.getResult());
       }
-
-      Value array_of_requests_ptr =
-          LLVM::GEPOp::create(rewriter, op.getLoc(), type_ptr, type_ptr,
-                              array_of_requests, ValueRange{})
-              .getResult();
 
       Value status_ptr =
           LLVM::AddressOfOp::create(
@@ -1290,10 +1287,9 @@ struct LowerCommMpiWaitallOpToJIT
 
       // TODO error checking
       // currently, we ignore the int return code
-      LLVM::CallOp::create(
-          rewriter, op.getLoc(), TypeRange{type_i32},
-          SymbolRefAttr::get(context, function_name),
-          ValueRange{count, array_of_requests_ptr, status_ptr});
+      LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{type_i32},
+                           SymbolRefAttr::get(context, function_name),
+                           ValueRange{count, array_of_requests, status_ptr});
 
       LLVM::ReturnOp::create(rewriter, op.getLoc(), ValueRange{});
     }
