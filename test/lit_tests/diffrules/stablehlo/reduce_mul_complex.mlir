@@ -24,10 +24,10 @@ func.func @main() {
   %init = stablehlo.constant dense<(2.0, 1.0)> : tensor<complex<f32>>
   %seed = stablehlo.constant dense<(1.0, 0.0)> : tensor<complex<f32>>
 
-  %rev:3 = enzyme.autodiff @prod(%a, %init, %seed) {
+  %rev:3 = enzyme.autodiff @prod(%a, %init, %seed) <{
     activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>],
     ret_activity=[#enzyme.activity<enzyme_active>]
-  } : (tensor<2xcomplex<f32>>, tensor<complex<f32>>, tensor<complex<f32>>) -> (tensor<complex<f32>>, tensor<2xcomplex<f32>>, tensor<complex<f32>>)
+  }> : (tensor<2xcomplex<f32>>, tensor<complex<f32>>, tensor<complex<f32>>) -> (tensor<complex<f32>>, tensor<2xcomplex<f32>>, tensor<complex<f32>>)
 
   check.expect_almost_eq_const %rev#0, dense<(20.0, 15.0)> : tensor<complex<f32>>
   check.expect_almost_eq_const %rev#1, dense<[(10.0, 5.0), (0.0, -5.0)]> : tensor<2xcomplex<f32>>
