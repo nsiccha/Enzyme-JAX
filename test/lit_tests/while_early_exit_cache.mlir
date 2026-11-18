@@ -71,8 +71,8 @@ module {
 
   func.func @main(%x: tensor<2xf64>, %start: tensor<i64>) -> (tensor<2xf64>, tensor<2xf64>) {
     %seed = stablehlo.constant dense<1.000000e+00> : tensor<f64>
-    %0 = enzyme.autodiff @early_exit(%x, %seed) {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (tensor<2xf64>, tensor<f64>) -> tensor<2xf64>
-    %1 = enzyme.autodiff @early_exit_attr(%x, %start, %seed) {activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (tensor<2xf64>, tensor<i64>, tensor<f64>) -> tensor<2xf64>
+    %0 = enzyme.autodiff @early_exit(%x, %seed) <{activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]}> : (tensor<2xf64>, tensor<f64>) -> tensor<2xf64>
+    %1 = enzyme.autodiff @early_exit_attr(%x, %start, %seed) <{activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]}> : (tensor<2xf64>, tensor<i64>, tensor<f64>) -> tensor<2xf64>
     return %0, %1 : tensor<2xf64>, tensor<2xf64>
   }
 }
