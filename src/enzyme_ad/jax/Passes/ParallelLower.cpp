@@ -729,6 +729,12 @@ void ParallelLower::runOnOperation() {
         /*asyncObject=*/nullptr,
         /*workgroup*/ TypeRange(),
         /*private*/ TypeRange(), clusterX, clusterY, clusterZ);
+    for (auto atname : {"passthrough", "target_features", "target_cpu"}) {
+      if (auto attr = launchOp->getAttr(atname))
+        op->setAttr(atname, attr);
+      else if (auto attr = fn->getAttr(atname))
+        op->setAttr(atname, attr);
+    }
 
     // The kernel lives in the GPU module, which a func.call cannot name:
     // the call only carries its operands into the inlining, which is given
@@ -941,31 +947,7 @@ void ParallelLower::runOnOperation() {
       }
     });
 
-    llvm::StringMap<memref::AllocaOp> sharedmems;
-    container.walk([&](mlir::LLVM::AddressOfOp alop) {
-      auto PT = cast<LLVM::LLVMPointerType>(alop.getType());
-      if (PT.getAddressSpace() != 3)
-        return;
-
-      if (auto glob = alop.getGlobal(symbolTable)) {
-        if (sharedmems.find(glob.getName()) == sharedmems.end()) {
-          builder.setInsertionPointToStart(blockB);
-          SmallVector<int64_t> size;
-          Type elType = glob.getGlobalType();
-          while (auto AT = dyn_cast<LLVM::LLVMArrayType>(elType)) {
-            size.push_back(AT.getNumElements());
-            elType = AT.getElementType();
-          }
-          auto newAlloca = memref::AllocaOp::create(
-              builder, alop.getLoc(), MemRefType::get(size, elType));
-          if (auto align = glob.getAlignment())
-            newAlloca.setAlignment(*align);
-          sharedmems[glob.getName()] = newAlloca;
-        }
-        builder.replaceOpWithNewOp<enzymexla::Memref2PointerOp>(
-            alop, alop.getType(), sharedmems[glob.getName()]);
-      }
-    });
+    privatizeSharedMemory(builder, container, blockB, symbolTable);
 
     /*
     // If we are compiling for GPU
@@ -1046,8 +1028,9 @@ void ParallelLower::runOnOperation() {
                                                    storeOp.getMapOperands());
         indices.push_back(apply->getResult(0));
       }
-      builder.replaceOpWithNewOp<memref::StoreOp>(storeOp, storeOp.getValue(),
-                                                  storeOp.getMemref(), indices);
+      builder.replaceOpWithNewOp<memref::StoreOp>(
+          storeOp, storeOp.getValue(), storeOp.getMemref(), indices,
+          /*nontemporal=*/false, storeOp.getMaybeAlign());
     });
 
     container.walk([&](affine::AffineLoadOp storeOp) {
@@ -1061,7 +1044,8 @@ void ParallelLower::runOnOperation() {
         indices.push_back(apply->getResult(0));
       }
       builder.replaceOpWithNewOp<memref::LoadOp>(storeOp, storeOp.getMemref(),
-                                                 indices);
+                                                 indices, /*nontemporal=*/false,
+                                                 storeOp.getMaybeAlign());
     });
     builder.eraseOp(launchOp);
   }
@@ -1087,8 +1071,8 @@ void ParallelLower::runOnOperation() {
       bool changed = false;
       for (auto callable : remaining) {
         auto sym = cast<SymbolOpInterface>(callable);
-        assert(sym.canDiscardOnUseEmpty());
-        assert(sym.isPrivate());
+        assert(isa<gpu::GPUFuncOp>(callable) || sym.canDiscardOnUseEmpty());
+        assert(isa<gpu::GPUFuncOp>(callable) || sym.isPrivate());
         if (symbolUserMap.useEmpty(sym)) {
           sym->erase();
           changed = true;
@@ -1104,8 +1088,8 @@ void ParallelLower::runOnOperation() {
       SymbolUserMap symbolUserMap(symbolTable, getOperation());
       for (auto callable : remaining) {
         auto sym = cast<SymbolOpInterface>(callable);
-        assert(sym.canDiscardOnUseEmpty());
-        assert(sym.isPrivate());
+        assert(isa<gpu::GPUFuncOp>(callable) || sym.canDiscardOnUseEmpty());
+        assert(isa<gpu::GPUFuncOp>(callable) || sym.isPrivate());
         if (symbolUserMap.useEmpty(sym)) {
           sym->erase();
         } else {

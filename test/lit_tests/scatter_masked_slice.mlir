@@ -84,7 +84,7 @@ func.func @two_intervals(%input: tensor<16xf32>, %update: tensor<10xf32>) -> ten
 // CHECK-NEXT:  func.func @dynamic_bound(%arg0: tensor<16xf32>, %arg1: tensor<10xf32>, %arg2: tensor<i64>) -> tensor<16xf32> {
 // CHECK-NEXT:    %c = stablehlo.constant dense<[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]> : tensor<10xi64>
 // CHECK-NEXT:    %0 = stablehlo.broadcast_in_dim %arg2, dims = [] {enzymexla.non_negative = [#enzymexla.guaranteed<NOTGUARANTEED>]} : (tensor<i64>) -> tensor<10xi64>
-// CHECK-NEXT:    %1 = stablehlo.compare LT, %c, %0 : (tensor<10xi64>, tensor<10xi64>) -> tensor<10xi1>
+// CHECK-NEXT:    %1 = stablehlo.compare GT, %0, %c : (tensor<10xi64>, tensor<10xi64>) -> tensor<10xi1>
 // CHECK-NEXT:    %2 = stablehlo.slice %arg0 [0:10] : (tensor<16xf32>) -> tensor<10xf32>
 // CHECK-NEXT:    %3 = stablehlo.select %1, %arg1, %2 : tensor<10xi1>, tensor<10xf32>
 // CHECK-NEXT:    %4 = stablehlo.slice %arg0 [10:16] : (tensor<16xf32>) -> tensor<6xf32>
@@ -161,8 +161,8 @@ func.func @expanded_term(%input: tensor<100xf32>, %update: tensor<10x10xf32>) ->
 
 // CHECK:  func.func @expanded_term(%arg0: tensor<100xf32>, %arg1: tensor<10x10xf32>) -> tensor<100xf32> {
 // CHECK-NEXT:    %0 = stablehlo.slice %arg1 [0:4, 0:10] : (tensor<10x10xf32>) -> tensor<4x10xf32>
-// CHECK-NEXT:    %1 = stablehlo.reshape %arg0 : (tensor<100xf32>) -> tensor<10x10xf32>
-// CHECK-NEXT:    %2 = stablehlo.slice %1 [4:10, 0:10] : (tensor<10x10xf32>) -> tensor<6x10xf32>
+// CHECK-NEXT:    %1 = stablehlo.slice %arg0 [40:100] : (tensor<100xf32>) -> tensor<60xf32>
+// CHECK-NEXT:    %2 = stablehlo.reshape %1 : (tensor<60xf32>) -> tensor<6x10xf32>
 // CHECK-NEXT:    %3 = stablehlo.concatenate %0, %2, dim = 0 : (tensor<4x10xf32>, tensor<6x10xf32>) -> tensor<10x10xf32>
 // CHECK-NEXT:    %4 = stablehlo.reshape %3 : (tensor<10x10xf32>) -> tensor<100xf32>
 // CHECK-NEXT:    return %4 : tensor<100xf32>

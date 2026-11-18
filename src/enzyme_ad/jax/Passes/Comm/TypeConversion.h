@@ -7,7 +7,14 @@ namespace mlir::comm {
 
 struct StablehloTypeConverter : public TypeConverter {
 public:
-  StablehloTypeConverter();
+  // `requestWidth` is the bit width of `MPI_Request`, which is
+  // implementation-defined (e.g. `int` in MPICH, a pointer in Open MPI)
+  StablehloTypeConverter(unsigned requestWidth = 64);
+};
+
+struct MpiToNcclTypeConverter : public TypeConverter {
+public:
+  MpiToNcclTypeConverter();
 };
 
 } // namespace mlir::comm

@@ -25,11 +25,14 @@
 #include "llvm/ADT/PointerUnion.h"
 
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/Interfaces/MemorySlotInterfaces.h"
+#include "mlir/Interfaces/Utils/MemorySlotUtils.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/RegionUtils.h"
 
 #include "Dialect/Ops.h"
 #include "mlir/IR/TypeSupport.h"
+#include "mlir/IR/TypeUtilities.h"
 
 #include "stablehlo/dialect/ChloOps.h"
 #include "stablehlo/dialect/StablehloOps.h"
@@ -108,6 +111,102 @@ static inline Operation *createAddRegion(Operation *op) {
   return op;
 }
 
+// Row-major position of each element within its reduction window.
+static Value createWindowIndex(OpBuilder &builder, Location loc,
+                               RankedTensorType idxTy,
+                               ArrayRef<int64_t> reducedDims) {
+  SmallVector<int64_t> dims(reducedDims);
+  llvm::sort(dims);
+  Value linIdx = nullptr;
+  int64_t stride = 1;
+  for (int64_t d : llvm::reverse(dims)) {
+    Value iota = IotaOp::create(builder, loc, idxTy, d);
+    if (stride != 1)
+      iota = MulOp::create(
+          builder, loc, iota,
+          ConstantOp::create(builder, loc,
+                             cast<ElementsAttr>(makeAttr(idxTy, stride))));
+    linIdx = linIdx ? AddOp::create(builder, loc, linIdx, iota) : iota;
+    stride *= idxTy.getDimSize(d);
+  }
+  return linIdx ? linIdx
+                : ConstantOp::create(builder, loc,
+                                     cast<ElementsAttr>(makeAttr(idxTy, 0)));
+}
+
+// Computes, alongside a reduce maximum/minimum of `input`, the window index
+// (see createWindowIndex) of the element its result is taken from: the last
+// one on ties, a NaN over any number, and -1 when the init value wins.
+static Value createWinnerIndex(OpBuilder &builder, Location loc, bool isMax,
+                               Value input, Value init,
+                               ArrayRef<int64_t> reducedDims) {
+  auto inTy = cast<RankedTensorType>(input.getType());
+  int64_t windowSize = 1;
+  SmallVector<int64_t> resShape;
+  for (auto [i, size] : llvm::enumerate(inTy.getShape())) {
+    if (llvm::is_contained(reducedDims, (int64_t)i))
+      windowSize *= size;
+    else
+      resShape.push_back(size);
+  }
+  Type idxElTy = windowSize <= std::numeric_limits<int32_t>::max()
+                     ? builder.getI32Type()
+                     : builder.getI64Type();
+
+  auto idxTy = RankedTensorType::get(inTy.getShape(), idxElTy);
+  auto valScalarTy = RankedTensorType::get({}, inTy.getElementType());
+  auto idxScalarTy = RankedTensorType::get({}, idxElTy);
+
+  Value linIdx = createWindowIndex(builder, loc, idxTy, reducedDims);
+  auto red = ReduceOp::create(
+      builder, loc,
+      TypeRange{RankedTensorType::get(resShape, inTy.getElementType()),
+                RankedTensorType::get(resShape, idxElTy)},
+      ValueRange{input, linIdx},
+      ValueRange{init, ConstantOp::create(
+                           builder, loc,
+                           cast<ElementsAttr>(makeAttr(idxScalarTy, -1)))},
+      reducedDims);
+
+  Block *block = new Block();
+  red.getBody().push_back(block);
+  block->addArguments({valScalarTy, idxScalarTy, valScalarTy, idxScalarTy},
+                      {loc, loc, loc, loc});
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToEnd(block);
+  Value a = block->getArgument(0), ia = block->getArgument(1);
+  Value b = block->getArgument(2), ib = block->getArgument(3);
+  auto cmp = [&](Value x, Value y, ComparisonDirection dir) -> Value {
+    return CompareOp::create(builder, loc, x, y, dir);
+  };
+  auto bAnd = [&](Value x, Value y) -> Value {
+    return stablehlo::AndOp::create(builder, loc, x, y);
+  };
+  auto bOr = [&](Value x, Value y) -> Value {
+    return stablehlo::OrOp::create(builder, loc, x, y);
+  };
+
+  // Order by value with NaN above everything, then by window index, so the
+  // reducer stays associative and commutative.
+  Value aNan = cmp(a, a, ComparisonDirection::NE);
+  Value bNan = cmp(b, b, ComparisonDirection::NE);
+  Value strictlyBetter =
+      cmp(a, b, isMax ? ComparisonDirection::GT : ComparisonDirection::LT);
+  Value bNotNan = stablehlo::NotOp::create(builder, loc, bNan);
+  Value onlyANan = bAnd(aNan, bNotNan);
+  Value aBetter = bOr(strictlyBetter, onlyANan);
+  Value eq = cmp(a, b, ComparisonDirection::EQ);
+  Value bothNan = bAnd(aNan, bNan);
+  Value same = bOr(eq, bothNan);
+  Value aLater = cmp(ia, ib, ComparisonDirection::GT);
+  Value tieA = bAnd(same, aLater);
+  Value pickA = bOr(aBetter, tieA);
+  Value val = SelectOp::create(builder, loc, pickA, a, b);
+  Value idx = SelectOp::create(builder, loc, pickA, ia, ib);
+  ReturnOp::create(builder, loc, ValueRange{val, idx});
+  return red.getResult(1);
+}
+
 Operation *cloneWithNewResultTypes(Operation *op, OpBuilder &builder,
                                    IRMapping &mapper,
                                    TypeRange newResultTypes) {
@@ -165,7 +264,7 @@ bool hasSameOperandAndResultTypes(Operation &op) {
          llvm::all_of(op.getResultTypes(), typeMatch);
 }
 
-static bool isEligibleForCompactPrint(ReduceOp op) {
+template <typename OpTy> static bool isEligibleForCompactPrint(OpTy op) {
   // Check E1.
   auto &block = op.getBody().front();
   if (!hasSingleElement(block.without_terminator()))
@@ -263,14 +362,24 @@ public:
 
     IRMapping map;
     for (auto &operand : orig->getOpOperands()) {
+      bool isInitVal = operand.getOperandNumber() >=
+                       red.getInitValues().getBeginOperandIndex();
       if (!gutils->isConstantValue(operand.get())) {
+        if (gutils->width > 1 && isInitVal) {
+          orig->emitError()
+              << "Unsupported non-constant init arg to batched reduce forward "
+                 "handler(opidx="
+              << operand.getOperandNumber() << ", op=" << operand.get()
+              << ")\n";
+          return failure();
+        }
         map.map(operand.get(), gutils->invertPointerM(operand.get(), builder));
         continue;
       }
       if (auto iface =
               dyn_cast<AutoDiffTypeInterface>(operand.get().getType())) {
         if (!iface.isMutable()) {
-          Type retTy = iface.getShadowType();
+          Type retTy = iface.getShadowType(isInitVal ? 1 : gutils->width);
           auto toret = cast<AutoDiffTypeInterface>(retTy).createNullValue(
               builder, operand.get().getLoc());
           map.map(operand.get(), toret);
@@ -308,31 +417,80 @@ public:
       shadow = builder.clone(*orig, map);
     }
 
-    auto invAdd = gutils->invertedPointers.lookup(innerOp.getResult(0));
-    gutils->invertedPointers.erase(innerOp.getResult(0));
-    gutils->erase(invAdd.getDefiningOp());
+    if (auto invAdd =
+            gutils->invertedPointers.lookupOrNull(innerOp.getResult(0))) {
+      gutils->invertedPointers.erase(innerOp.getResult(0));
+      gutils->erase(invAdd.getDefiningOp());
+    }
     BitVector baToErase(cast<OpTy>(primal).getBody().front().getNumArguments());
     for (auto ba : red.getBody().front().getArguments()) {
-      auto invBA = cast<BlockArgument>(gutils->invertedPointers.lookup(ba));
-      gutils->invertedPointers.erase(ba);
-      baToErase.set(invBA.getArgNumber());
+      if (auto invBA = dyn_cast_or_null<BlockArgument>(
+              gutils->invertedPointers.lookupOrNull(ba))) {
+        gutils->invertedPointers.erase(ba);
+        baToErase.set(invBA.getArgNumber());
+      }
     }
     cast<OpTy>(primal).getBody().front().eraseArguments(baToErase);
 
     if (gutils->width > 1) { // batched forward mode
-      auto dimsAttr =
-          dyn_cast<DenseI64ArrayAttr>(shadow->getAttr("dimensions"));
-      if (!dimsAttr) {
-        shadow->emitError("Missing 'dimensions' attribute on ReduceOp");
-        return failure();
+      if constexpr (std::is_same_v<OpTy, ReduceOp>) {
+        auto dimsAttr =
+            dyn_cast<DenseI64ArrayAttr>(shadow->getAttr("dimensions"));
+        if (!dimsAttr) {
+          shadow->emitError("Missing 'dimensions' attribute on ReduceOp");
+          return failure();
+        }
+
+        SmallVector<int64_t> dims;
+        for (int64_t d : dimsAttr.asArrayRef())
+          dims.push_back(d + 1);
+
+        shadow->setAttr("dimensions",
+                        DenseI64ArrayAttr::get(builder.getContext(), dims));
+      } else if constexpr (std::is_same_v<OpTy, ReduceWindowOp>) {
+        auto shadowRW = cast<ReduceWindowOp>(shadow);
+        SmallVector<int64_t> windowDims = {1};
+        windowDims.append(shadowRW.getWindowDimensions().begin(),
+                          shadowRW.getWindowDimensions().end());
+        shadowRW.setWindowDimensionsAttr(
+            builder.getDenseI64ArrayAttr(windowDims));
+
+        if (shadowRW.getWindowStrides()) {
+          SmallVector<int64_t> windowStrides = {1};
+          windowStrides.append(shadowRW.getWindowStrides()->begin(),
+                               shadowRW.getWindowStrides()->end());
+          shadowRW.setWindowStridesAttr(
+              builder.getDenseI64ArrayAttr(windowStrides));
+        }
+
+        if (shadowRW.getBaseDilations()) {
+          SmallVector<int64_t> baseDilations = {1};
+          baseDilations.append(shadowRW.getBaseDilations()->begin(),
+                               shadowRW.getBaseDilations()->end());
+          shadowRW.setBaseDilationsAttr(
+              builder.getDenseI64ArrayAttr(baseDilations));
+        }
+
+        if (shadowRW.getWindowDilations()) {
+          SmallVector<int64_t> windowDilations = {1};
+          windowDilations.append(shadowRW.getWindowDilations()->begin(),
+                                 shadowRW.getWindowDilations()->end());
+          shadowRW.setWindowDilationsAttr(
+              builder.getDenseI64ArrayAttr(windowDilations));
+        }
+
+        if (shadowRW.getPadding()) {
+          auto paddingOriginal =
+              llvm::to_vector(shadowRW.getPadding()->getValues<int64_t>());
+          auto paddingType = RankedTensorType::get(
+              {static_cast<int64_t>(1 + paddingOriginal.size() / 2), 2},
+              builder.getI64Type());
+          SmallVector<int64_t> newPadding = {0, 0};
+          newPadding.append(paddingOriginal.begin(), paddingOriginal.end());
+          shadowRW.setPaddingAttr(
+              mlir::DenseIntElementsAttr::get(paddingType, newPadding));
+        }
       }
-
-      SmallVector<int64_t> dims;
-      for (int64_t d : dimsAttr.asArrayRef())
-        dims.push_back(d + 1);
-
-      shadow->setAttr("dimensions",
-                      DenseI64ArrayAttr::get(builder.getContext(), dims));
     }
 
     size_t shadowCnt = 0;
@@ -652,6 +810,35 @@ class AutoDiffWhileRev
         for (Operation &nested : block)
           forgetNestedBlockArgs(&nested, mapping);
       }
+  }
+
+  // forceAugmentedReturns gives each block nested in the augmented body of
+  // `orig` a shadow argument after each active mutable argument (e.g. the
+  // buffers of a jit_region). Checkpointing copies that body into primal-only
+  // recompute loops and erases it before any reverse rule gets to use the
+  // shadows, so the copies would keep arguments nothing provides. Drop them up
+  // front; reverse rules visiting the replayed body re-create what they need.
+  static void dropNestedShadowArgs(Operation *orig,
+                                   MGradientUtilsReverse *gutils) {
+    orig->walk([&](Block *blk) {
+      Block *nblk = gutils->getNewFromOriginal(blk);
+      if (nblk->getNumArguments() == blk->getNumArguments())
+        return;
+      for (BlockArgument val : llvm::reverse(blk->getArguments())) {
+        if (gutils->isConstantValue(val))
+          continue;
+        auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+        if (!iface || !iface.isMutable())
+          continue;
+        unsigned pos = cast<BlockArgument>(gutils->getNewFromOriginal(val))
+                           .getArgNumber() +
+                       1;
+        if (!nblk->getArgument(pos).use_empty())
+          continue;
+        nblk->eraseArgument(pos);
+        gutils->invertedPointers.erase(val);
+      }
+    });
   }
 
   // arr[index:index+1, :, :, :] = val
@@ -1047,13 +1234,17 @@ public:
                                  MGradientUtilsReverse *gutils, Block *origBody,
                                  Block *revOuterBody,
                                  ArrayRef<bool> operandsActive) {
+    auto isMutable = [](Value val) {
+      return cast<AutoDiffTypeInterface>(val.getType()).isMutable();
+    };
+
     for (auto arg : origBody->getArguments())
-      if (!gutils->isConstantValue(arg))
+      if (!gutils->isConstantValue(arg) && !isMutable(arg))
         gutils->zeroDiffe(arg, builder);
 
     for (auto &it : origBody->getOperations())
       for (auto res : it.getResults())
-        if (!gutils->isConstantValue(res))
+        if (!gutils->isConstantValue(res) && !isMutable(res))
           gutils->zeroDiffe(res, builder);
   }
 
@@ -1061,13 +1252,13 @@ public:
   // replay: an op visited after the loop must still see the caller's value.
   static bool publishesCopiedSeeds() { return false; }
 
-  // The reverse body zeroes nothing up front -- every gradient slot a body op
-  // touches is created inside the replayed segment, and the loop-carried one
-  // arrives through the iteration argument the caller seeds right after this.
   static void primeSegmentGradients(OpBuilder &builder,
                                     MGradientUtilsReverse *gutils,
                                     Block *origBody, Block *revLoopBody,
-                                    ArrayRef<bool> operandsActive) {}
+                                    ArrayRef<bool> operandsActive) {
+    builder.setInsertionPointToStart(revLoopBody);
+    localizeGradients(builder, gutils, origBody);
+  }
 
   // A cache a body op's reverse rule asks for while the segment is being
   // replayed has to be initialized outside the replay loop, not in the
@@ -1429,6 +1620,9 @@ public:
       for (auto &it : oBB->getOperations()) {
         for (auto res : it.getResults()) {
           if (!gutils->isConstantValue(res)) {
+            auto iface = cast<AutoDiffTypeInterface>(res.getType());
+            if (iface.isMutable())
+              continue;
             gutils->zeroDiffe(res, bodyBuilder);
           }
         }
@@ -1508,6 +1702,7 @@ public:
 
         if (needsCheckpointing(whileOp) ||
             needsBinomialCheckpointing(whileOp)) {
+          dropNestedShadowArgs(orig, gutils);
           Operation *scope = newWhile->getParentOp();
           if (auto caches = markScaffoldLoops(
                   scope, [&] { return tryCacheValues(whileOp, orig, gutils); }))
@@ -1570,7 +1765,7 @@ public:
 
       gutils->replaceOrigOpWith(orig, newResults);
       gutils->erase(newWhile);
-      gutils->originalToNewFnOps[orig] = newnewWhile;
+      gutils->originalToNewFn.map(orig, newnewWhile.getOperation());
 
       Value inductionOut =
           newnewWhile->getResult(newnewWhile->getNumResults() - 1);
@@ -1741,11 +1936,18 @@ public:
     SmallVector<int64_t> starts;
     SmallVector<int64_t> edge_padding_high;
     SmallVector<int64_t> interior_padding;
-    for (auto &&[start, limit, stride, dim] :
-         llvm::zip(op.getStartIndices(), op.getLimitIndices(), op.getStrides(),
-                   inTy.getShape())) {
+    for (auto &&[start, stride, dim, outDim] :
+         llvm::zip(op.getStartIndices(), op.getStrides(), inTy.getShape(),
+                   op.getType().getShape())) {
       starts.push_back(start);
-      edge_padding_high.push_back(dim - limit);
+      // The limit index of a strided slice need not be tight (e.g. x[1:1119:2]
+      // and x[1:1118:2] of a 1120-element tensor both yield 559 elements), so
+      // the high padding must be derived from the number of result elements
+      // rather than from `dim - limit`. The padded result has
+      // `outDim + start + high + (outDim - 1) * (stride - 1)` elements for
+      // `outDim > 0`, which must equal `dim`.
+      int64_t end = outDim == 0 ? start : start + (outDim - 1) * stride + 1;
+      edge_padding_high.push_back(dim - end);
       interior_padding.push_back(stride - 1);
     }
 
@@ -2022,37 +2224,55 @@ public:
     }
 
     if (isa<MaxOp>(innerOp) || isa<MinOp>(innerOp)) {
-      // TODO: technically we should invert the order here to pick the last
-      // value (or divide by count) if multiple are the same as the result
-      Value oprev = gutils->popCache(caches[0], builder);
-      Value oinit = gutils->popCache(caches[1], builder);
-      Value ores = gutils->popCache(caches[2], builder);
+      bool inputActive = !gutils->isConstantValue(op.getInputs()[0]);
+      bool initActive = !gutils->isConstantValue(op.getInitValues()[0]);
+      if (!inputActive && !initActive)
+        return success();
 
-      if (!gutils->isConstantValue(op.getInputs()[0])) {
+      // Position of the winner within its reduction window, or -1 if the
+      // result came from the init value.
+      Value winner = gutils->popCache(caches[0], builder);
+      auto winnerTy = cast<RankedTensorType>(winner.getType());
+      auto loc = op.getLoc();
+
+      if (inputActive) {
         auto attr = builder.getDenseI64ArrayAttr(toBroadcast);
-        auto bc = BroadcastInDimOp::create(builder, op.getLoc(),
-                                           oprev.getType(), ores, attr);
-
-        auto cmp = CompareOp::create(builder, op.getLoc(), bc, oprev,
-                                     ComparisonDirection::EQ);
-
-        auto bc2 = BroadcastInDimOp::create(builder, op.getLoc(),
-                                            oprev.getType(), inDiffe, attr);
-
-        auto res =
-            stablehlo::SelectOp::create(builder, op.getLoc(), cmp, bc2, zero);
+        auto idxTy =
+            RankedTensorType::get(inTy.getShape(), winnerTy.getElementType());
+        Value linIdx =
+            createWindowIndex(builder, loc, idxTy, op.getDimensions());
+        auto winnerBc =
+            BroadcastInDimOp::create(builder, loc, idxTy, winner, attr);
+        auto isWinner = CompareOp::create(builder, loc, linIdx, winnerBc,
+                                          ComparisonDirection::EQ);
+        auto bc2 = BroadcastInDimOp::create(
+            builder, loc, gutils->getShadowType(inTy), inDiffe, attr);
+        auto res = SelectOp::create(builder, loc, isWinner, bc2, zero);
         gutils->addToDiffe(op.getInputs()[0], res, builder);
       }
-      if (!gutils->isConstantValue(op.getInitValues()[0])) {
+
+      if (initActive) {
         auto zeroI = cast<AutoDiffTypeInterface>(inDiffe.getType())
-                         .createNullValue(builder, op.getLoc());
+                         .createNullValue(builder, loc);
+        auto fromInit = CompareOp::create(
+            builder, loc, winner,
+            ConstantOp::create(builder, loc,
+                               cast<ElementsAttr>(makeAttr(winnerTy, -1))),
+            ComparisonDirection::EQ);
+        Value res = SelectOp::create(builder, loc, fromInit, inDiffe, zeroI);
 
-        auto cmp = CompareOp::create(builder, op.getLoc(), ores, oinit,
-                                     ComparisonDirection::EQ);
-
-        auto res = stablehlo::SelectOp::create(builder, op.getLoc(), cmp,
-                                               inDiffe, zeroI);
-        gutils->addToDiffe(op.getInitValues()[0], res, builder);
+        // The scalar init seeds every result element, so sum its adjoints.
+        Value init = op.getInitValues()[0];
+        auto initShadowTy = gutils->getShadowType(init.getType());
+        SmallVector<int64_t> allDims = llvm::to_vector(llvm::seq<int64_t>(
+            0, cast<RankedTensorType>(res.getType()).getRank()));
+        auto initDiffeSum = ReduceOp::create(
+            builder, loc, TypeRange{initShadowTy}, ValueRange{res},
+            ValueRange{cast<AutoDiffTypeInterface>(initShadowTy)
+                           .createNullValue(builder, loc)},
+            allDims);
+        createAddRegion(initDiffeSum);
+        gutils->addToDiffe(init, initDiffeSum->getResult(0), builder);
       }
       return success();
     }
@@ -2062,9 +2282,8 @@ public:
       Value init = op->getOperand(1);
 
       Value cachedValue = gutils->popCache(caches[0], builder);
-      Value cachedInit = gutils->popCache(caches[1], builder);
-      Value cachedResult = gutils->popCache(caches[2], builder);
-      bool isComplex = isa<ComplexType>(inTy.getElementType());
+      Value cachedResult = gutils->popCache(caches[1], builder);
+      Value cachedInit = gutils->popCache(caches[2], builder);
 
       if (!gutils->isConstantValue(value)) {
         auto binDiffe = stablehlo::BroadcastInDimOp::create(
@@ -2076,12 +2295,12 @@ public:
             builder.getDenseI64ArrayAttr(toBroadcast));
 
         // valueDiffe = inDiffe * conj(cachedResult / cachedValue)
-        Value quotient = stablehlo::DivOp::create(
-            builder, op.getLoc(), resultBroadcasted, cachedValue);
-        if (isComplex)
-          quotient = chlo::ConjOp::create(builder, op.getLoc(), quotient);
+        Value div = stablehlo::DivOp::create(builder, op.getLoc(),
+                                             resultBroadcasted, cachedValue);
+        div = cast<AutoDiffTypeInterface>(div.getType())
+                  .createConjOp(builder, op.getLoc(), div);
         Value outDiffe =
-            stablehlo::MulOp::create(builder, op.getLoc(), binDiffe, quotient);
+            stablehlo::MulOp::create(builder, op.getLoc(), binDiffe, div);
 
         gutils->addToDiffe(value, outDiffe, builder);
       }
@@ -2091,8 +2310,8 @@ public:
             builder.getDenseI64ArrayAttr({}));
         Value divResInit = stablehlo::DivOp::create(
             builder, op.getLoc(), cachedResult, broadcastedInit);
-        if (isComplex)
-          divResInit = chlo::ConjOp::create(builder, op.getLoc(), divResInit);
+        divResInit = cast<AutoDiffTypeInterface>(divResInit.getType())
+                         .createConjOp(builder, op.getLoc(), divResInit);
         Value broadcastedInitDiffe =
             stablehlo::MulOp::create(builder, op.getLoc(), divResInit, inDiffe);
 
@@ -2129,11 +2348,28 @@ public:
     }
 
     Operation &innerOp = op.getBody().front().front();
-    if (isa<MulOp, MaxOp, MinOp>(innerOp)) {
+    if (isa<MaxOp, MinOp>(innerOp)) {
+      if (gutils->isConstantValue(op.getInputs()[0]) &&
+          gutils->isConstantValue(op.getInitValues()[0]))
+        return {};
+
+      Operation *newOp = gutils->getNewFromOriginal(orig);
+      OpBuilder cacheBuilder(newOp);
+      cacheBuilder.setInsertionPointAfter(newOp);
+      Value winner =
+          createWinnerIndex(cacheBuilder, op.getLoc(), isa<MaxOp>(innerOp),
+                            gutils->getNewFromOriginal(op.getInputs()[0]),
+                            gutils->getNewFromOriginal(op.getInitValues()[0]),
+                            op.getDimensions());
+      return {gutils->initAndPushCache(winner, cacheBuilder)};
+    }
+
+    if (isa<MulOp>(innerOp)) {
+      // [value, result, init]
       SmallVector<Value> caches;
 
-      auto result = op.getResult(0);
       auto value = orig->getOperand(0);
+      auto result = op.getResult(0);
       auto init = orig->getOperand(1);
 
       Operation *newOp = gutils->getNewFromOriginal(orig);
@@ -2141,11 +2377,12 @@ public:
 
       caches.push_back(gutils->initAndPushCache(
           gutils->getNewFromOriginal(value), cacheBuilder));
-      caches.push_back(gutils->initAndPushCache(
-          gutils->getNewFromOriginal(init), cacheBuilder));
       cacheBuilder.setInsertionPointAfter(newOp);
       caches.push_back(gutils->initAndPushCache(
           gutils->getNewFromOriginal(result), cacheBuilder));
+      cacheBuilder.setInsertionPoint(newOp);
+      caches.push_back(gutils->initAndPushCache(
+          gutils->getNewFromOriginal(init), cacheBuilder));
 
       return caches;
     }
@@ -2312,6 +2549,25 @@ struct ScatterActivity
   }
 };
 
+// A convert between floating-point (or complex) types is linear and is
+// differentiated by the tablegen rule. A convert to or from an integer type
+// (a truncation, or the use of a truncated value) is piecewise constant, so
+// the op is inactive: the integer side carries no shadow and nothing flows
+// through it. Without this, `float(unsafe_trunc(Int, x))` differentiated as
+// the identity since the two converts composed to a linear round trip.
+struct ConvertActivity
+    : public ActivityOpInterface::ExternalModel<ConvertActivity, ConvertOp> {
+  static bool isFloatLike(Type ty) {
+    return isa<FloatType, ComplexType>(getElementTypeOrSelf(ty));
+  }
+  bool isInactive(Operation *op) const {
+    auto cvt = cast<ConvertOp>(op);
+    return !isFloatLike(cvt.getOperand().getType()) ||
+           !isFloatLike(cvt.getResult().getType());
+  }
+  bool isArgInactive(Operation *op, size_t idx) const { return isInactive(op); }
+};
+
 struct ADDataFlowWhileOp
     : public ADDataFlowOpInterface::ExternalModel<ADDataFlowWhileOp, WhileOp> {
 
@@ -2352,13 +2608,14 @@ struct ADDataFlowWhileOp
   }
 };
 
+template <typename OpTy>
 struct ADDataFlowReduceOp
-    : public ADDataFlowOpInterface::ExternalModel<ADDataFlowReduceOp,
-                                                  ReduceOp> {
+    : public ADDataFlowOpInterface::ExternalModel<ADDataFlowReduceOp<OpTy>,
+                                                  OpTy> {
 
   SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
                                                    mlir::OpResult v) const {
-    auto srt = cast<ReduceOp>(op);
+    auto srt = cast<OpTy>(op);
     auto resvals = cast<ReturnOp>(op->getRegion(0).front().back());
     return {
         srt.getInputs()[v.getResultNumber()],
@@ -2368,7 +2625,7 @@ struct ADDataFlowReduceOp
   }
   SmallVector<Value>
   getPotentialIncomingValuesArg(Operation *op, mlir::BlockArgument v) const {
-    auto srt = cast<ReduceOp>(op);
+    auto srt = cast<OpTy>(op);
     auto resvals = cast<ReturnOp>(op->getRegion(0).front().back());
     if (v.getArgNumber() < srt.getInitValues().size())
       return {srt.getInitValues()[v.getArgNumber()],
@@ -2380,11 +2637,12 @@ struct ADDataFlowReduceOp
   }
   SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
                                                  Value v) const {
-    auto srt = cast<ReduceOp>(op);
+    auto srt = cast<OpTy>(op);
     SmallVector<Value> sv;
     for (size_t i = 0; i < srt.getInputs().size(); i++) {
       if (term->getOperands()[i] == v) {
         sv.push_back(srt.getResults()[i]);
+        sv.push_back(op->getRegion(0).front().getArguments()[i]);
         sv.push_back(op->getRegion(0)
                          .front()
                          .getArguments()[srt.getInitValues().size() + i]);
@@ -2544,7 +2802,7 @@ public:
     // Replace all uses of original results
     gutils->replaceOrigOpWith(op, reps);
     gutils->erase(newOp);
-    gutils->originalToNewFnOps[op] = replacement;
+    gutils->originalToNewFn.map(op, replacement.getOperation());
     return success();
   }
 };
@@ -2942,8 +3200,6 @@ public:
       if (origTerminator->getParentRegion() ==
           &cast<WhileOp>(parentOp).getCond()) {
       } else {
-        llvm::SmallDenseSet<unsigned> resultPositionsToShadow;
-
         for (auto &&[res, arg] :
              llvm::zip(wop.getResults(), wop.getBody().front().getArguments()))
           if (!gutils->isConstantValue(res) || !gutils->isConstantValue(arg)) {
@@ -3076,7 +3332,7 @@ public:
     }
 
     gutils->replaceOrigOpWith(op, replacementResults);
-    gutils->originalToNewFnOps[op] = newSortOp;
+    gutils->originalToNewFn.map(op, newSortOp.getOperation());
     gutils->eraseIfUnused(op);
     return success();
   }
@@ -3216,7 +3472,7 @@ public:
 
     gutils->replaceOrigOpWith(orig, replacements);
     gutils->eraseIfUnused(orig);
-    gutils->originalToNewFnOps[orig] = newSortOp;
+    gutils->originalToNewFn.map(orig, newSortOp.getOperation());
 
     return caches;
   }
@@ -3295,149 +3551,6 @@ public:
     }
 
     return {};
-  }
-
-  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
-                                   MGradientUtilsReverse *gutils) const {
-    return success();
-  }
-};
-
-// solve with the conjugate transpose of op(a)
-static Value adjointTriangularSolve(OpBuilder &builder, Location loc, Value a,
-                                    Value g, bool leftSide, bool lower,
-                                    bool unitDiagonal, stablehlo::Transpose t) {
-  if (t == stablehlo::Transpose::NO_TRANSPOSE)
-    return triangularSolve(builder, loc, a, g, leftSide, lower, unitDiagonal,
-                           adjointTranspose(a));
-  if (t == stablehlo::Transpose::TRANSPOSE)
-    a = conjIfComplex(builder, loc, a);
-  return triangularSolve(builder, loc, a, g, leftSide, lower, unitDiagonal,
-                         stablehlo::Transpose::NO_TRANSPOSE);
-}
-
-class AutoDiffTriangularSolveFwd
-    : public AutoDiffOpInterface::ExternalModel<AutoDiffTriangularSolveFwd,
-                                                TriangularSolveOp> {
-public:
-  LogicalResult createForwardModeTangent(Operation *orig, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
-    auto op = cast<TriangularSolveOp>(orig);
-    if (gutils->isConstantInstruction(op) ||
-        gutils->isConstantValue(op.getResult()))
-      return success();
-
-    // the tangent uses the primal result
-    builder.setInsertionPointAfter(gutils->getNewFromOriginal(orig));
-    Location loc = op.getLoc();
-    bool left = op.getLeftSide(), lower = op.getLower(),
-         unit = op.getUnitDiagonal();
-    auto t = op.getTransposeA();
-    int64_t width = gutils->width;
-    Value a = broadcastToWidth(builder, loc,
-                               gutils->getNewFromOriginal(op.getA()), width);
-
-    Value rhs = nullptr;
-    if (!gutils->isConstantValue(op.getB()))
-      rhs = gutils->invertPointerM(op.getB(), builder);
-    if (!gutils->isConstantValue(op.getA())) {
-      Value dT =
-          keepTriangle(builder, loc, gutils->invertPointerM(op.getA(), builder),
-                       readTriangle(lower, unit));
-      if (t == stablehlo::Transpose::ADJOINT)
-        dT = conjIfComplex(builder, loc, dT);
-      Value x = broadcastToWidth(
-          builder, loc, gutils->getNewFromOriginal(op.getResult()), width);
-      // dx = op(a)^-1 (db - op(da) x)
-      bool transposed = t != stablehlo::Transpose::NO_TRANSPOSE;
-      Value dMx = left ? batchedMatmul(builder, loc, dT, x, transposed)
-                       : batchedMatmul(builder, loc, x, dT, false, transposed);
-      if (rhs)
-        rhs = stablehlo::SubtractOp::create(builder, loc, rhs, dMx);
-      else
-        rhs = stablehlo::NegOp::create(builder, loc, dMx);
-    }
-    assert(rhs && "an active result has an active operand");
-    gutils->setDiffe(
-        op.getResult(),
-        triangularSolve(builder, loc, a, rhs, left, lower, unit, t), builder);
-    return success();
-  }
-};
-
-class AutoDiffTriangularSolveRev
-    : public ReverseAutoDiffOpInterface::ExternalModel<
-          AutoDiffTriangularSolveRev, TriangularSolveOp> {
-public:
-  LogicalResult createReverseModeAdjoint(Operation *orig, OpBuilder &builder,
-                                         MGradientUtilsReverse *gutils,
-                                         SmallVector<Value> caches) const {
-    auto op = cast<TriangularSolveOp>(orig);
-    if (gutils->isConstantInstruction(op) ||
-        gutils->isConstantValue(op.getResult()))
-      return success();
-
-    bool aActive = !gutils->isConstantValue(op.getA());
-    bool bActive = !gutils->isConstantValue(op.getB());
-    Value g = gutils->diffe(op.getResult(), builder);
-    gutils->zeroDiffe(op.getResult(), builder);
-    if (!aActive && !bActive)
-      return success();
-
-    Location loc = op.getLoc();
-    bool left = op.getLeftSide(), lower = op.getLower(),
-         unit = op.getUnitDiagonal();
-    auto t = op.getTransposeA();
-    int64_t width = gutils->width;
-    Value a = broadcastToWidth(builder, loc,
-                               gutils->popCache(caches[0], builder), width);
-    Value bbar =
-        adjointTriangularSolve(builder, loc, a, g, left, lower, unit, t);
-    if (bActive)
-      gutils->addToDiffe(op.getB(), bbar, builder);
-
-    if (aActive) {
-      Value x = broadcastToWidth(builder, loc,
-                                 gutils->popCache(caches[1], builder), width);
-      // op(a)_bar = -b_bar x^H (left) or -x^H b_bar (right)
-      Value p = bbar, q = x;
-      if (t == stablehlo::Transpose::ADJOINT)
-        p = conjIfComplex(builder, loc, p);
-      else
-        q = conjIfComplex(builder, loc, q);
-      if (left != (t == stablehlo::Transpose::NO_TRANSPOSE))
-        std::swap(p, q);
-      Value tbar = stablehlo::NegOp::create(
-          builder, loc, batchedMatmul(builder, loc, p, q, !left, left));
-      gutils->addToDiffe(
-          op.getA(),
-          keepTriangle(builder, loc, tbar, readTriangle(lower, unit)), builder);
-    }
-    return success();
-  }
-
-  SmallVector<Value> cacheValues(Operation *orig,
-                                 MGradientUtilsReverse *gutils) const {
-    auto op = cast<TriangularSolveOp>(orig);
-    if (gutils->isConstantInstruction(op) ||
-        gutils->isConstantValue(op.getResult()))
-      return {};
-    bool aActive = !gutils->isConstantValue(op.getA());
-    bool bActive = !gutils->isConstantValue(op.getB());
-    if (!aActive && !bActive)
-      return {};
-
-    Operation *newOp = gutils->getNewFromOriginal(orig);
-    OpBuilder cacheBuilder(newOp);
-    SmallVector<Value> caches;
-    caches.push_back(gutils->initAndPushCache(
-        gutils->getNewFromOriginal(op.getA()), cacheBuilder));
-    if (aActive) {
-      cacheBuilder.setInsertionPointAfter(newOp);
-      caches.push_back(gutils->initAndPushCache(
-          gutils->getNewFromOriginal(op.getResult()), cacheBuilder));
-    }
-    return caches;
   }
 
   LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
@@ -3590,8 +3703,13 @@ public:
     for (auto &it : *body) {
       Operation *op = &it;
 
-      if (auto setOp = dyn_cast<enzyme::SetOp>(op))
+      if (auto setOp = dyn_cast<enzyme::SetOp>(op)) {
+        if (auto initOp = setOp.getGradient().getDefiningOp<enzyme::InitOp>()) {
+          if (op->isProperAncestor(initOp))
+            continue;
+        }
         updatedGradients.insert(setOp.getGradient());
+      }
 
       if (auto pushOp = dyn_cast<enzyme::PushOp>(op)) {
         CacheInfo info(pushOp.getCache());
@@ -4309,6 +4427,143 @@ struct CaseOpEnzymeOpsRemover
   }
 };
 
+class TokenTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<TokenTypeInterface,
+                                                  stablehlo::TokenType> {
+public:
+  Attribute createNullAttr(Type self) const { return {}; }
+
+  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    return stablehlo::AfterAllOp::create(builder, loc, ValueRange());
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    llvm_unreachable("tokens are never accumulated");
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    return a;
+  }
+
+  Type getShadowType(Type self, int64_t width) const {
+    assert(width == 1 && "tokens cannot be batched");
+    return self;
+  }
+
+  bool isMutable(Type self) const { return false; }
+
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
+
+  bool isZero(Type self, Value val) const { return false; }
+  bool isZeroAttr(Type self, Attribute attr) const { return false; }
+};
+
+static bool isHLOValueType(Type type) {
+  return isa<RankedTensorType, stablehlo::TokenType>(type);
+}
+
+struct WhileOpPromotableRegion
+    : public PromotableRegionOpInterface::ExternalModel<WhileOpPromotableRegion,
+                                                        WhileOp> {
+  bool isRegionPromotable(Operation *op, const MemorySlot &slot, Region *region,
+                          bool hasValueStores) const {
+    if (!hasValueStores)
+      return true;
+
+    return region == &cast<WhileOp>(op).getBody() &&
+           isHLOValueType(slot.valueType);
+  }
+
+  void setupPromotion(
+      Operation *op, const MemorySlot &slot, Value reachingDef,
+      bool hasValueStores,
+      llvm::SmallMapVector<Region *, Value, 2> &regionsToProcess) const {
+    auto whileOp = cast<WhileOp>(op);
+    Region &condRegion = whileOp.getCond();
+    Region &bodyRegion = whileOp.getBody();
+    if (!hasValueStores) {
+      regionsToProcess.insert({&condRegion, reachingDef});
+      regionsToProcess.insert({&bodyRegion, reachingDef});
+      return;
+    }
+
+    whileOp.getOperandMutable().append(reachingDef);
+
+    condRegion.addArgument(slot.valueType, slot.ptr.getLoc());
+    regionsToProcess.insert({&condRegion, condRegion.getArguments().back()});
+
+    bodyRegion.addArgument(slot.valueType, slot.ptr.getLoc());
+    regionsToProcess.insert({&bodyRegion, bodyRegion.getArguments().back()});
+  }
+
+  Value
+  finalizePromotion(Operation *op, const MemorySlot &slot, Value reachingDef,
+                    bool hasValueStores,
+                    const llvm::DenseMap<Block *, Value> &reachingAtBlockEnd,
+                    OpBuilder &builder) const {
+    if (!hasValueStores)
+      return reachingDef;
+
+    auto whileOp = cast<WhileOp>(op);
+    Region &bodyRegion = whileOp.getBody();
+    memoryslot::updateTerminator(&bodyRegion.front(),
+                                 bodyRegion.getArguments().back(),
+                                 reachingAtBlockEnd);
+
+    SmallVector<Type> resultTypes(op->getResultTypes());
+    resultTypes.push_back(slot.valueType);
+
+    IRRewriter rewriter(builder);
+    Operation *newOp =
+        memoryslot::replaceWithNewResults(rewriter, op, resultTypes);
+    return newOp->getResults().back();
+  }
+};
+
+template <typename OpTy>
+struct BranchOpPromotableRegion
+    : public PromotableRegionOpInterface::ExternalModel<
+          BranchOpPromotableRegion<OpTy>, OpTy> {
+  bool isRegionPromotable(Operation *op, const MemorySlot &slot, Region *region,
+                          bool hasValueStores) const {
+    return !hasValueStores || isHLOValueType(slot.valueType);
+  }
+
+  void setupPromotion(
+      Operation *op, const MemorySlot &slot, Value reachingDef,
+      bool hasValueStores,
+      llvm::SmallMapVector<Region *, Value, 2> &regionsToProcess) const {
+    for (Region &region : op->getRegions())
+      regionsToProcess.insert({&region, reachingDef});
+  }
+
+  Value
+  finalizePromotion(Operation *op, const MemorySlot &slot, Value reachingDef,
+                    bool hasValueStores,
+                    const llvm::DenseMap<Block *, Value> &reachingAtBlockEnd,
+                    OpBuilder &builder) const {
+    if (!hasValueStores)
+      return reachingDef;
+
+    for (Region &region : op->getRegions())
+      memoryslot::updateTerminator(&region.front(), reachingDef,
+                                   reachingAtBlockEnd);
+
+    SmallVector<Type> resultTypes(op->getResultTypes());
+    resultTypes.push_back(slot.valueType);
+
+    IRRewriter rewriter(builder);
+    Operation *newOp =
+        memoryslot::replaceWithNewResults(rewriter, op, resultTypes);
+    return newOp->getResults().back();
+  }
+};
+
 struct SHLOReduceOpBatchInterface
     : public BatchOpInterface::ExternalModel<SHLOReduceOpBatchInterface,
                                              ReduceOp> {
@@ -4697,33 +4952,6 @@ struct SHLOSliceOpBatchInterface
   }
 };
 
-// Returns true if `batched` provably holds the same value in every batch
-// element, i.e. it was produced by broadcasting an unbatched value along the
-// batch dimensions (which is what the batching machinery emits for operands
-// that are invariant across the batch), or it is a splat constant.
-//
-// When every start index of a dynamic_slice/dynamic_update_slice is batch
-// invariant we can keep using a single dynamic_slice/dynamic_update_slice on
-// the batched operand. Otherwise the op has to be lowered to a gather/scatter,
-// since one (update-)slice cannot express a different offset per batch element.
-static bool isBatchInvariant(Value batched, ArrayRef<int64_t> batchSizes) {
-  SplatElementsAttr splat;
-  if (matchPattern(batched, m_Constant(&splat)))
-    return true;
-
-  auto bcast = batched.getDefiningOp<stablehlo::BroadcastInDimOp>();
-  if (!bcast)
-    return false;
-
-  // `broadcast_dimensions` maps operand dimensions onto result dimensions. If
-  // no batch dimension is mapped onto, every batch dimension is an expanded
-  // (broadcast) dimension and the value does not vary across the batch.
-  for (int64_t dim : bcast.getBroadcastDimensions())
-    if (dim < (int64_t)batchSizes.size())
-      return false;
-  return true;
-}
-
 static bool allStartIndicesBatchInvariant(Operation::operand_range startIndices,
                                           IRMapping &mapper,
                                           ArrayRef<int64_t> batchSizes) {
@@ -4916,23 +5144,10 @@ SmallVector<Value> computeBatchedStartIndices(Operation *op, OpBuilder &builder,
   for (int64_t i = 0; i < batchSizes.size(); i++)
     newStartIndices.push_back(zeroStart);
 
-  SmallVector<int64_t> innerSliceStarts, innerSliceLimits, innerSliceStrides;
-  for (int64_t i = 0; i < batchSizes.size(); i++) {
-    innerSliceStarts.push_back(0);
-    innerSliceLimits.push_back(1);
-    innerSliceStrides.push_back(1);
-  }
-
-  for (auto sIndex : startIndices) {
-    // We need to slice and extract a single element
-    auto newStartIndex = stablehlo::SliceOp::create(
-        builder, op->getLoc(), mapper.lookup(sIndex), innerSliceStarts,
-        innerSliceLimits, innerSliceStrides);
-    auto newStartIndexReshape = stablehlo::ReshapeOp::create(
-        builder, op->getLoc(), RankedTensorType::get({}, startIndicesElemType),
-        newStartIndex);
-    newStartIndices.push_back(newStartIndexReshape.getResult());
-  }
+  for (auto sIndex : startIndices)
+    newStartIndices.push_back(getFirstBatchElement(
+        builder, op->getLoc(), mapper.lookup(sIndex),
+        RankedTensorType::get({}, startIndicesElemType), batchSizes));
 
   return newStartIndices;
 }
@@ -5406,18 +5621,30 @@ void mlir::enzyme::registerStableHLODialectAutoDiffInterface(
     stablehlo::IfOp::attachInterface<IfOpEnzymeOpsRemover>(*context);
     stablehlo::CaseOp::attachInterface<CaseOpEnzymeOpsRemover>(*context);
 
+    stablehlo::TokenType::attachInterface<TokenTypeInterface>(*context);
+    WhileOp::attachInterface<WhileOpPromotableRegion>(*context);
+    stablehlo::IfOp::attachInterface<BranchOpPromotableRegion<stablehlo::IfOp>>(
+        *context);
+    stablehlo::CaseOp::attachInterface<
+        BranchOpPromotableRegion<stablehlo::CaseOp>>(*context);
+
     WhileOp::attachInterface<ADDataFlowWhileOp>(*context);
     SortOp::attachInterface<ADDataFlowSortOp>(*context);
     ScatterOp::attachInterface<ADDataFlowScatterOp>(*context);
-    ReduceOp::attachInterface<ADDataFlowReduceOp>(*context);
+    ReduceOp::attachInterface<ADDataFlowReduceOp<ReduceOp>>(*context);
+    ReduceWindowOp::attachInterface<ADDataFlowReduceOp<ReduceWindowOp>>(
+        *context);
 
     ScatterOp::attachInterface<ScatterActivity>(*context);
+    ConvertOp::attachInterface<ConvertActivity>(*context);
     ScatterOp::attachInterface<AutoDiffScatterFwd>(*context);
     ScatterOp::attachInterface<AutoDiffScatterRev>(*context);
 
     ReturnOp::attachInterface<AutoDiffHLOReturn>(*context);
 
     ReduceOp::attachInterface<AutoDiffReduceFwd<ReduceOp>>(*context);
+    ReduceWindowOp::attachInterface<AutoDiffReduceFwd<ReduceWindowOp>>(
+        *context);
     stablehlo::IfOp::attachInterface<AutoDiffIfRev>(*context);
     stablehlo::IfOp::attachInterface<AutoDiffIfFwd>(*context);
     stablehlo::IfOp::attachInterface<AutoDiffIfCF>(*context);
@@ -5431,6 +5658,7 @@ void mlir::enzyme::registerStableHLODialectAutoDiffInterface(
     WhileOp::attachInterface<AutoDiffWhileFwd>(*context);
     WhileOp::attachInterface<AutoDiffWhileRev>(*context);
     ReduceOp::attachInterface<AutoDiffReduceCF<ReduceOp>>(*context);
+    ReduceWindowOp::attachInterface<AutoDiffReduceCF<ReduceWindowOp>>(*context);
     WhileOp::attachInterface<AutoDiffReduceCF<WhileOp>>(*context);
     BroadcastInDimOp::attachInterface<AutoDiffBroadcastInDimRev>(*context);
     stablehlo::SliceOp::attachInterface<AutoDiffSliceRev>(*context);
@@ -5439,8 +5667,6 @@ void mlir::enzyme::registerStableHLODialectAutoDiffInterface(
     ConcatenateOp::attachInterface<AutoDiffConcatenateRev>(*context);
     BatchNormTrainingOp::attachInterface<AutoDiffBatchNormTrainingRev>(
         *context);
-    TriangularSolveOp::attachInterface<AutoDiffTriangularSolveFwd>(*context);
-    TriangularSolveOp::attachInterface<AutoDiffTriangularSolveRev>(*context);
     CholeskyOp::attachInterface<AutoDiffCholeskyFwd>(*context);
     CholeskyOp::attachInterface<AutoDiffCholeskyRev>(*context);
 

@@ -391,3 +391,36 @@ func.func @sum_complex_components(%arg: tensor<1x2xcomplex<f32>>, %pv: tensor<co
 // REDUCE_PAD: %[[C:.*]] = stablehlo.complex %[[RS]], %[[IS]] : tensor<complex<f32>>
 // REDUCE_PAD: %[[F:.*]] = stablehlo.add %arg2, %[[C]] : tensor<complex<f32>>
 // REDUCE_PAD: stablehlo.pad %[[R]], %[[F]], low = [0], high = [1], interior = [0]
+
+module {
+  func.func @main(%a : tensor<2x3xf32>, %b : tensor<f32>) -> tensor<f32> {
+    %pv = stablehlo.constant dense<1.000000e+00> : tensor<f32>
+    %pad = stablehlo.pad %a, %pv, low = [1, 1], high = [1, 1], interior = [0, 0] : (tensor<2x3xf32>, tensor<f32>) -> tensor<4x5xf32>
+    %conv = stablehlo.reduce(%pad init: %b) applies stablehlo.add across dimensions = [0, 1] : (tensor<4x5xf32>, tensor<f32>) -> tensor<f32>
+    return %conv : tensor<f32>
+  }
+}
+
+// CHECK: func.func @main(%arg0: tensor<2x3xf32>, %arg1: tensor<f32>) -> tensor<f32> {
+// CHECK-NEXT:     %cst = stablehlo.constant dense<1.400000e+01> : tensor<f32>
+// CHECK-NEXT:     %0 = stablehlo.reduce(%arg0 init: %arg1) applies stablehlo.add across dimensions = [0, 1] : (tensor<2x3xf32>, tensor<f32>) -> tensor<f32>
+// CHECK-NEXT:     %1 = stablehlo.add %0, %cst : tensor<f32>
+// CHECK-NEXT:     return %1 : tensor<f32>
+// CHECK-NEXT: }
+
+module {
+  func.func @main(%a : tensor<2x3xf32>, %b : tensor<f32>) -> tensor<4xf32> {
+    %pv = stablehlo.constant dense<0.000000e+00> : tensor<f32>
+    %pad = stablehlo.pad %a, %pv, low = [1, 0], high = [1, 0], interior = [0, 0] : (tensor<2x3xf32>, tensor<f32>) -> tensor<4x3xf32>
+    %conv = stablehlo.reduce(%pad init: %b) applies stablehlo.maximum across dimensions = [1] : (tensor<4x3xf32>, tensor<f32>) -> tensor<4xf32>
+    return %conv : tensor<4xf32>
+  }
+}
+
+// CHECK: func.func @main(%arg0: tensor<2x3xf32>, %arg1: tensor<f32>) -> tensor<4xf32> {
+// CHECK-NEXT:     %cst = stablehlo.constant dense<0.000000e+00> : tensor<f32>
+// CHECK-NEXT:     %0 = stablehlo.reduce(%arg0 init: %arg1) applies stablehlo.maximum across dimensions = [1] : (tensor<2x3xf32>, tensor<f32>) -> tensor<2xf32>
+// CHECK-NEXT:     %1 = stablehlo.maximum %arg1, %cst : tensor<f32>
+// CHECK-NEXT:     %2 = stablehlo.pad %0, %1, low = [1], high = [1], interior = [0] : (tensor<2xf32>, tensor<f32>) -> tensor<4xf32>
+// CHECK-NEXT:     return %2 : tensor<4xf32>
+// CHECK-NEXT: }

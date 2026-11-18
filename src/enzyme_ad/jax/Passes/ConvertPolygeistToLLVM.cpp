@@ -19,6 +19,7 @@
 #include "llvm/Support/MD5.h"
 
 #include "mlir/Analysis/DataLayoutAnalysis.h"
+#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
@@ -94,6 +95,31 @@ using namespace mlir::enzymexla;
 
 mlir::LLVM::LLVMFuncOp GetOrCreateFreeFunction(ModuleOp module);
 
+// True when `type`'s layout describes exactly the row-major-contiguous
+// strides for its (static part of the) shape, regardless of offset. Bare
+// pointer lowering never encodes the offset in the type -- it gets folded
+// directly into the GEP that produces the pointer -- so a memref.subview
+// result (e.g. `strided<[1], offset: ?>`) is exactly as convertible as an
+// identity-layout memref of the same shape.
+static bool isContiguousLayoutIgnoringOffset(MemRefType type) {
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  if (failed(type.getStridesAndOffset(strides, offset)))
+    return false;
+
+  int64_t running = 1;
+  for (int64_t i = type.getRank() - 1; i >= 0; --i) {
+    if (strides[i] != running)
+      return false;
+    int64_t size = type.getShape()[i];
+    // Only the leading dimension may be dynamic (checked by the caller).
+    if (ShapedType::isDynamic(size))
+      continue;
+    running *= size;
+  }
+  return true;
+}
+
 Type convertMemrefElementTypeForLLVMPointer(
     MemRefType type, const LLVMTypeConverter &converter) {
   Type converted = converter.convertType(type.getElementType());
@@ -108,10 +134,7 @@ Type convertMemrefElementTypeForLLVMPointer(
   if (llvm::any_of(type.getShape().drop_front(), ShapedType::isDynamic))
     return Type();
 
-  // Only identity layout is supported.
-  // TODO: detect the strided layout that is equivalent to identity
-  // given the static part of the shape.
-  if (!type.getLayout().isIdentity())
+  if (!type.getLayout().isIdentity() && !isContiguousLayoutIgnoringOffset(type))
     return Type();
 
   if (type.getRank() > 0) {
@@ -121,10 +144,30 @@ Type convertMemrefElementTypeForLLVMPointer(
   return converted;
 }
 
-// Runtime initialization must precede persistent temporary initialization;
-// destructor priorities run in the reverse order.
+// Runtime initialization must precede persistent temporary initialization.
+// Each constructor registers its teardown with atexit, so the teardowns run in
+// the reverse order.
 static constexpr int32_t xlaRuntimePriority = 65534;
 static constexpr int32_t xlaTempsPriority = 65535;
+
+// Emits, at the insertion point of `builder`, the registration of `teardown`
+// to run at exit. The XLA runtime teardown destroys compiled executables, which
+// uses function-local statics of XLA and LLVM. Those are destroyed by atexit
+// handlers, all of which run before the functions in llvm.global_dtors, so the
+// teardown must be an atexit handler as well, registered after the statics it
+// uses are constructed.
+static LogicalResult emitAtExit(OpBuilder &builder, Location loc,
+                                ModuleOp moduleOp, LLVM::LLVMFuncOp teardown) {
+  auto *context = moduleOp.getContext();
+  Type params[] = {LLVM::LLVMPointerType::get(context)};
+  auto atExitFn = LLVM::lookupOrCreateFn(builder, moduleOp, "atexit", params,
+                                         IntegerType::get(context, 32));
+  if (failed(atExitFn))
+    return moduleOp.emitError("atexit already exists with different types");
+  Value callee = LLVM::AddressOfOp::create(builder, loc, teardown);
+  LLVM::CallOp::create(builder, loc, atExitFn.value(), callee);
+  return success();
+}
 
 static Value insertXLAInitDeinit(mlir::ModuleOp moduleOp, StringRef backend,
                                  RewriterBase &rewriter) {
@@ -168,12 +211,6 @@ static Value insertXLAInitDeinit(mlir::ModuleOp moduleOp, StringRef backend,
     auto ctorSymbol = FlatSymbolRefAttr::get(ctor);
     LLVM::GlobalCtorsOp::create(
         rewriter, loc, rewriter.getArrayAttr({std::move(ctorSymbol)}),
-        rewriter.getI32ArrayAttr({xlaRuntimePriority}),
-        rewriter.getArrayAttr({LLVM::ZeroAttr::get(rewriter.getContext())}));
-
-    auto dtorSymbol = FlatSymbolRefAttr::get(dtor);
-    LLVM::GlobalDtorsOp::create(
-        rewriter, loc, rewriter.getArrayAttr({std::move(dtorSymbol)}),
         rewriter.getI32ArrayAttr({xlaRuntimePriority}),
         rewriter.getArrayAttr({LLVM::ZeroAttr::get(rewriter.getContext())}));
 
@@ -225,6 +262,9 @@ static Value insertXLAInitDeinit(mlir::ModuleOp moduleOp, StringRef backend,
         LLVM::AddressOfOp::create(rewriter, loc, ptrty, data.getSymNameAttr());
     Value args[] = {glob, stringval};
     LLVM::CallOp::create(rewriter, loc, xlaInitFn.value(), args);
+    // The runtime constructs the statics its teardown uses before returning.
+    if (failed(emitAtExit(rewriter, loc, moduleOp, dtor)))
+      return nullptr;
     LLVM::ReturnOp::create(rewriter, loc, ValueRange());
   }
 
@@ -320,16 +360,16 @@ static LogicalResult lowerGlobalTemps(ModuleOp module, StringRef backend,
   }
 
   rewriter.setInsertionPointToEnd(ctorBlock);
+  // Registered after the runtime teardown, so it runs before: the temporaries
+  // are released while the runtime that owns them still exists.
+  if (failed(emitAtExit(rewriter, loc, module, dtor)))
+    return failure();
   LLVM::ReturnOp::create(rewriter, loc, ValueRange());
   rewriter.setInsertionPointToEnd(dtorBlock);
   LLVM::ReturnOp::create(rewriter, loc, ValueRange());
   rewriter.setInsertionPointToEnd(module.getBody());
   LLVM::GlobalCtorsOp::create(
       rewriter, loc, rewriter.getArrayAttr({FlatSymbolRefAttr::get(ctor)}),
-      rewriter.getI32ArrayAttr({xlaTempsPriority}),
-      rewriter.getArrayAttr({LLVM::ZeroAttr::get(module.getContext())}));
-  LLVM::GlobalDtorsOp::create(
-      rewriter, loc, rewriter.getArrayAttr({FlatSymbolRefAttr::get(dtor)}),
       rewriter.getI32ArrayAttr({xlaTempsPriority}),
       rewriter.getArrayAttr({LLVM::ZeroAttr::get(module.getContext())}));
 
@@ -932,6 +972,45 @@ protected:
         LLVM::LLVMPointerType::get(op.getContext(),
                                    originalType.getMemorySpaceAsInt()),
         elTy, adaptor.getMemref(), args);
+  }
+};
+
+/// Pattern for lowering a memref.subview to a GEP that offsets the base
+/// bare pointer by the subview's offsets. Sizes and strides need no codegen
+/// here: they only constrain what later ops may legally do with the result,
+/// which -- being itself just a bare pointer -- carries no shape of its own.
+struct CSubViewOpLowering : public ConvertOpToLLVMPattern<memref::SubViewOp> {
+  using ConvertOpToLLVMPattern<memref::SubViewOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(memref::SubViewOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    MemRefType sourceType = op.getSourceType();
+
+    auto resultPtrType = dyn_cast_or_null<LLVM::LLVMPointerType>(
+        getTypeConverter()->convertType(op.getType()));
+    if (!resultPtrType)
+      return rewriter.notifyMatchFailure(op, "unsupported result memref type");
+
+    auto elTy = convertMemrefElementTypeForLLVMPointer(
+        sourceType, *this->getTypeConverter());
+    if (!elTy)
+      return rewriter.notifyMatchFailure(op, "unsupported source memref type");
+
+    SmallVector<LLVM::GEPArg> args;
+    unsigned dynamicIdx = 0;
+    for (OpFoldResult ofr : op.getMixedOffsets()) {
+      if (auto attr = llvm::dyn_cast_if_present<Attribute>(ofr))
+        args.push_back(LLVM::GEPArg(cast<IntegerAttr>(attr).getInt()));
+      else
+        args.push_back(LLVM::GEPArg(adaptor.getOffsets()[dynamicIdx++]));
+    }
+
+    Value newPtr = LLVM::GEPOp::create(rewriter, loc, resultPtrType, elTy,
+                                       adaptor.getSource(), args);
+    rewriter.replaceOp(op, newPtr);
+    return success();
   }
 };
 
@@ -1743,6 +1822,11 @@ static std::string getFuncStubName(StringRef moduleName, StringRef name) {
       llvm::formatv("__polygeist_{0}_{1}_device_stub", moduleName, name));
 };
 
+static std::string getFuncGlobalName(StringRef moduleName, StringRef name) {
+  return std::string(
+      llvm::formatv("__polygeist_{0}_{1}_fun_ptr", moduleName, name));
+}
+
 // The host-side pointer a kernel is registered under, and which every symbolic
 // reference to that kernel must lower to. Clang emits a device stub for each
 // __global__ function and that stub is the address user code can take, so bind
@@ -1804,10 +1888,11 @@ public:
   ConvertLaunchFuncOpToGpuRuntimeCallPattern(LLVMTypeConverter &typeConverter,
                                              StringRef gpuBinaryAnnotation,
                                              std::string gpuTarget,
-                                             HostStubNames hostStubNames)
+                                             HostStubNames hostStubNames,
+                                             bool cudaGetKernel = false)
       : ConvertOpToGpuRuntimeCallPattern<gpu::LaunchFuncOp>(typeConverter),
         gpuBinaryAnnotation(gpuBinaryAnnotation), gpuTarget(gpuTarget),
-        hostStubNames(std::move(hostStubNames)) {}
+        hostStubNames(std::move(hostStubNames)), cudaGetKernel(cudaGetKernel) {}
 
 private:
   Value generateParamsArray(gpu::LaunchFuncOp launchOp, OpAdaptor adaptor,
@@ -1820,6 +1905,7 @@ private:
   llvm::SmallString<32> gpuBinaryAnnotation;
   std::string gpuTarget;
   HostStubNames hostStubNames;
+  bool cudaGetKernel;
 };
 
 class ConvertGPUModuleOp
@@ -1827,10 +1913,10 @@ class ConvertGPUModuleOp
 public:
   ConvertGPUModuleOp(LLVMTypeConverter &typeConverter,
                      StringRef gpuBinaryAnnotation, std::string gpuTarget,
-                     HostStubNames hostStubNames)
+                     HostStubNames hostStubNames, bool cudaGetKernel = false)
       : ConvertOpToGpuRuntimeCallPattern<gpu::GPUModuleOp>(typeConverter),
         gpuBinaryAnnotation(gpuBinaryAnnotation), gpuTarget(gpuTarget),
-        hostStubNames(std::move(hostStubNames)) {}
+        hostStubNames(std::move(hostStubNames)), cudaGetKernel(cudaGetKernel) {}
 
 private:
   LogicalResult
@@ -1840,6 +1926,7 @@ private:
   llvm::SmallString<32> gpuBinaryAnnotation;
   std::string gpuTarget;
   HostStubNames hostStubNames;
+  bool cudaGetKernel;
 };
 
 // tuple helpers
@@ -2587,6 +2674,7 @@ ConvertGPUModuleOp::matchAndRewrite(gpu::GPUModuleOp kernelModule,
       auto aoo = LLVM::AddressOfOp::create(ctorBuilder, ctorloc, moduleGlobal);
       LLVM::StoreOp::create(ctorBuilder, loc, module->getResult(0),
                             aoo->getResult(0));
+      SmallVector<std::pair<StringRef, Value>> registeredKernels;
       for (Operation &op : kernelModule->getRegion(0).front()) {
         if (auto f = dyn_cast<gpu::GPUFuncOp>(op)) {
           if (!f.isKernel())
@@ -2646,6 +2734,8 @@ ConvertGPUModuleOp::matchAndRewrite(gpu::GPUModuleOp kernelModule,
               nullPtr};
 
           LLVM::CallOp::create(rewriter, ctorloc, cudaRegisterFn.value(), args);
+          if (cudaGetKernel && gpuTarget == "cuda")
+            registeredKernels.emplace_back(f.getName(), bitcast);
         } else if (LLVM::GlobalOp g = dyn_cast<LLVM::GlobalOp>(op)) {
           int addrSpace = g.getAddrSpace();
           if (addrSpace != 1 /* device */ && addrSpace != 4 /* constant */)
@@ -2719,6 +2809,35 @@ ConvertGPUModuleOp::matchAndRewrite(gpu::GPUModuleOp kernelModule,
 
         LLVM::CallOp::create(rewriter, ctorloc, cudaRegisterFatbinFn.value(),
                              ValueRange(module->getResult(0)));
+
+        if (cudaGetKernel && !registeredKernels.empty()) {
+          Type getKernelTys[] = {llvmPointerType, llvmPointerType};
+          auto cudaGetKernelFn = LLVM::lookupOrCreateFn(
+              rewriter, moduleOp, "cudaGetKernel", getKernelTys, llvmInt32Type);
+          if (failed(cudaGetKernelFn)) {
+            llvm::errs()
+                << " cudaGetKernel already exists with different types\n";
+            return failure();
+          }
+          for (auto &[kernelName, stubPtr] : registeredKernels) {
+            auto funcGlobalName = getFuncGlobalName(moduleName, kernelName);
+            LLVM::GlobalOp kernelGlobal;
+            {
+              PatternRewriter::InsertionGuard B(rewriter);
+              rewriter.setInsertionPointToEnd(moduleOp.getBody());
+              kernelGlobal = LLVM::GlobalOp::create(
+                  rewriter, ctorloc, llvmPointerType, /* isConstant */ false,
+                  LLVM::Linkage::Internal, funcGlobalName,
+                  /* initValue */ mlir::Attribute(),
+                  /* alignment */ 8, /* addrSpace */ 0);
+            }
+            auto kernelGlobalAddr =
+                LLVM::AddressOfOp::create(ctorBuilder, ctorloc, kernelGlobal);
+            Value getKernelArgs[] = {kernelGlobalAddr, stubPtr};
+            LLVM::CallOp::create(rewriter, ctorloc, cudaGetKernelFn.value(),
+                                 getKernelArgs);
+          }
+        }
       }
       LLVM::ReturnOp::create(ctorBuilder, ctorloc, ValueRange());
     }
@@ -2804,18 +2923,22 @@ LogicalResult ConvertLaunchFuncOpToGpuRuntimeCallPattern::matchAndRewrite(
   if (!kernelModule)
     return rewriter.notifyMatchFailure(launchOp, "Expected a kernel module");
 
-  // auto getFuncGlobalName = [](StringRef moduleName, StringRef name) {
-  //   return std::string(
-  //       llvm::formatv("__polygeist_{0}_{1}_fun_ptr", moduleName, name));
-  // };
+  Value bitcast;
+  if (cudaGetKernel && gpuTarget == "cuda") {
+    auto funcGlobalName =
+        getFuncGlobalName(launchOp.getKernelModuleName().getValue(),
+                          launchOp.getKernelName().getValue());
+    auto aoo = LLVM::AddressOfOp::create(rewriter, loc, llvmPointerType,
+                                         funcGlobalName);
+    bitcast = LLVM::LoadOp::create(rewriter, loc, llvmPointerType, aoo);
+  } else {
+    std::string funcStubName = lookupHostStubName(
+        hostStubNames, launchOp.getKernelModuleName().getValue(),
+        launchOp.getKernelName().getValue());
 
-  // Build module constructor and destructor
-  std::string funcStubName = lookupHostStubName(
-      hostStubNames, launchOp.getKernelModuleName().getValue(),
-      launchOp.getKernelName().getValue());
-
-  auto bitcast =
-      LLVM::AddressOfOp::create(rewriter, loc, llvmPointerType, funcStubName);
+    bitcast =
+        LLVM::AddressOfOp::create(rewriter, loc, llvmPointerType, funcStubName);
+  }
 
   Value zero = LLVM::ConstantOp::create(rewriter, loc, llvmInt32Type, 0);
   auto nullpointer = LLVM::ZeroOp::create(rewriter, loc, llvmPointerType);
@@ -3323,12 +3446,14 @@ public:
   /// The attribute name to use instead of `gpu.kernel`.
   StringRef backend;
   HostStubNames hostStubNames;
+  bool cudaGetKernel;
 
   ConvertOccupancyOp(LLVMTypeConverter &typeConverter, StringRef backend,
-                     HostStubNames hostStubNames)
+                     HostStubNames hostStubNames, bool cudaGetKernel = false)
       : ConvertOpToGpuRuntimeCallPattern<enzymexla::GPUOccupancyOp>(
             typeConverter),
-        backend(backend), hostStubNames(std::move(hostStubNames)) {}
+        backend(backend), hostStubNames(std::move(hostStubNames)),
+        cudaGetKernel(cudaGetKernel) {}
 
 private:
   LogicalResult
@@ -3383,10 +3508,20 @@ private:
       ptr = LLVM::AllocaOp::create(rewriter, loc, ptrty, intty, one_entry);
     }
 
-    std::string funcStubName = lookupHostStubName(
-        hostStubNames, op.getFn().getRootReference().getValue(),
-        op.getFn().getLeafReference().getValue());
-    auto addr = LLVM::AddressOfOp::create(rewriter, loc, ptrty, funcStubName);
+    Value addr;
+    if (cudaGetKernel && backend == "cuda") {
+      auto funcGlobalName =
+          getFuncGlobalName(op.getFn().getRootReference().getValue(),
+                            op.getFn().getLeafReference().getValue());
+      auto aoo =
+          LLVM::AddressOfOp::create(rewriter, loc, ptrty, funcGlobalName);
+      addr = LLVM::LoadOp::create(rewriter, loc, ptrty, aoo);
+    } else {
+      std::string funcStubName = lookupHostStubName(
+          hostStubNames, op.getFn().getRootReference().getValue(),
+          op.getFn().getLeafReference().getValue());
+      addr = LLVM::AddressOfOp::create(rewriter, loc, ptrty, funcStubName);
+    }
     Value args[] = {ptr, addr, adaptor.getBlockSize(),
                     adaptor.getDynamicSMemSize(), adaptor.getFlags()};
     LLVM::CallOp::create(rewriter, loc, occupancyFn.value(), args);
@@ -3402,12 +3537,15 @@ public:
   /// The attribute name to use instead of `gpu.kernel`.
   StringRef backend;
   HostStubNames hostStubNames;
+  bool cudaGetKernel;
 
   ConvertGPUKernelAddressOp(LLVMTypeConverter &typeConverter, StringRef backend,
-                            HostStubNames hostStubNames)
+                            HostStubNames hostStubNames,
+                            bool cudaGetKernel = false)
       : ConvertOpToGpuRuntimeCallPattern<enzymexla::GPUKernelAddressOp>(
             typeConverter),
-        backend(backend), hostStubNames(std::move(hostStubNames)) {}
+        backend(backend), hostStubNames(std::move(hostStubNames)),
+        cudaGetKernel(cudaGetKernel) {}
 
 private:
   LogicalResult
@@ -3417,6 +3555,16 @@ private:
     if (backend != "cuda" && backend != "rocm")
       return rewriter.notifyMatchFailure(
           op, "KernelAddress lowering only supported for CUDA and ROCM");
+
+    if (cudaGetKernel && backend == "cuda") {
+      auto funcGlobalName =
+          getFuncGlobalName(op.getFn().getRootReference().getValue(),
+                            op.getFn().getLeafReference().getValue());
+      auto aoo = LLVM::AddressOfOp::create(rewriter, op.getLoc(), op.getType(),
+                                           funcGlobalName);
+      rewriter.replaceOpWithNewOp<LLVM::LoadOp>(op, op.getType(), aoo);
+      return success();
+    }
 
     std::string funcStubName = lookupHostStubName(
         hostStubNames, op.getFn().getRootReference().getValue(),
@@ -4196,9 +4344,9 @@ populateCStyleMemRefLoweringPatterns(RewritePatternSet &patterns,
                                      StringRef backend) {
   patterns.add<CAllocaOpLowering, CAllocOpLowering, CDeallocOpLowering,
                GetGlobalOpLowering, GlobalOpLowering, CLoadOpLowering,
-               CStoreOpLowering, AllocaScopeOpLowering, CAtomicRMWOpLowering,
-               CEnzymeAtomicRMWOpLowering, CMemorySpaceCastOpLowering>(
-      typeConverter);
+               CStoreOpLowering, CSubViewOpLowering, AllocaScopeOpLowering,
+               CAtomicRMWOpLowering, CEnzymeAtomicRMWOpLowering,
+               CMemorySpaceCastOpLowering>(typeConverter);
   patterns.add<FillZeroOpLowering>(typeConverter);
   patterns.add<CMemcpyOpLowering>(typeConverter, backend);
   patterns.add<CMemsetOpLowering>(typeConverter, backend);
@@ -4968,6 +5116,7 @@ struct ConvertPolygeistToLLVMPass
     std::string gpuTarget = backend;
 
     populatePolygeistToLLVMConversionPatterns(converter, patterns);
+    populateAffineToStdConversionPatterns(patterns);
     populateSCFToControlFlowConversionPatterns(patterns);
     // populateForBreakToWhilePatterns(patterns);
     cf::populateControlFlowToLLVMConversionPatterns(converter, patterns);
@@ -5007,19 +5156,20 @@ struct ConvertPolygeistToLLVMPass
     if (useCStyleMemRef) {
       auto hostStubNames = computeHostStubNames(m);
       patterns.add<ConvertLaunchFuncOpToGpuRuntimeCallPattern>(
-          converter, "gpu.binary", gpuTarget, hostStubNames);
+          converter, "gpu.binary", gpuTarget, hostStubNames, cudaGetKernel);
 
       patterns.add<ConvertGPUModuleOp>(converter, "gpu.binary", gpuTarget,
-                                       hostStubNames);
+                                       hostStubNames, cudaGetKernel);
       // patterns.add<LegalizeLaunchFuncOpPattern>(
       //     converter, /*kernelBarePtrCallConv*/ true,
       //     /*kernelIntersperseSizeCallConv*/ false);
       patterns.add<ConvertAllocOpToGpuRuntimeCallPattern<true>>(converter,
                                                                 gpuTarget);
-      patterns.add<ConvertOccupancyOp>(converter, gpuTarget, hostStubNames);
+      patterns.add<ConvertOccupancyOp>(converter, gpuTarget, hostStubNames,
+                                       cudaGetKernel);
 
       patterns.add<ConvertGPUKernelAddressOp>(converter, gpuTarget,
-                                              hostStubNames);
+                                              hostStubNames, cudaGetKernel);
 
       patterns.add<ConvertDeallocOpToGpuRuntimeCallPattern<true>>(converter,
                                                                   gpuTarget);
@@ -5062,6 +5212,52 @@ struct ConvertPolygeistToLLVMPass
     configureOpenMPToLLVMConversionLegality(target, converter);
     target.addIllegalOp<scf::ForOp, scf::IfOp, scf::ParallelOp, scf::WhileOp,
                         scf::ExecuteRegionOp, func::FuncOp>();
+    if (preserveXLAFuncs) {
+      // Functions belonging to the XLA host program (holding StableHLO or
+      // taking/returning tensors) are kept as-is, body included. Functions
+      // referenced by an xla_wrapper are still consumed by its lowering.
+      // A public function without arguments or results that no jit_call
+      // targets is an XLA entry point computing nothing (e.g. one whose
+      // results were all folded on the host), and is kept as well.
+      SymbolTableCollection symbolTables;
+      DenseSet<Operation *> wrapped, jitted;
+      m->walk([&](enzymexla::XLAWrapperOp wrap) {
+        if (auto fn = symbolTables.lookupNearestSymbolFrom(wrap, wrap.getFn()))
+          wrapped.insert(fn);
+      });
+      m->walk([&](enzymexla::JITCallOp call) {
+        if (auto fn = symbolTables.lookupNearestSymbolFrom(call, call.getFn()))
+          jitted.insert(fn);
+      });
+      auto isTensor = [](Type t) { return isa<TensorType>(t); };
+      DenseSet<Operation *> xlaFuncs;
+      for (auto func : m.getOps<func::FuncOp>()) {
+        if (wrapped.contains(func))
+          continue;
+        bool anyStablehlo =
+            func->walk([](Operation *op) -> WalkResult {
+                  if (op->getDialect() &&
+                      op->getDialect()->getNamespace() == "stablehlo")
+                    return WalkResult::interrupt();
+                  return WalkResult::advance();
+                })
+                .wasInterrupted();
+        bool emptyEntry = func.isPublic() && func.getNumArguments() == 0 &&
+                          func.getNumResults() == 0 && !jitted.contains(func);
+        if (anyStablehlo || emptyEntry ||
+            llvm::any_of(func.getArgumentTypes(), isTensor) ||
+            llvm::any_of(func.getResultTypes(), isTensor))
+          xlaFuncs.insert(func);
+      }
+      target.addDynamicallyLegalOp<func::FuncOp>(
+          [xlaFuncs](func::FuncOp func) -> std::optional<bool> {
+            return xlaFuncs.contains(func);
+          });
+      target.markOpRecursivelyLegal<func::FuncOp>(
+          [xlaFuncs](func::FuncOp func) -> std::optional<bool> {
+            return xlaFuncs.contains(func);
+          });
+    }
     target.addDynamicallyLegalDialect<LLVM::LLVMDialect>(areAllTypesConverted);
     target.addDynamicallyLegalOp<LLVM::GlobalOp>(
         [&](LLVM::GlobalOp op) -> std::optional<bool> {
@@ -5233,6 +5429,11 @@ struct ConvertPolygeistToLLVMPass
     }
 
     if (m->walk([](UnrealizedConversionCastOp op) {
+           // The stream is only known once lower-jit builds the entry point,
+           // which replaces these casts with its stream argument.
+           if (op->getNumOperands() == 1 &&
+               op->getOperand(0).getDefiningOp<enzymexla::GetStreamOp>())
+             return WalkResult::advance();
            InFlightDiagnostic diag =
                op->emitError() << "Unhandled unrealized conversion cast " << op;
            if (auto fn = op->getParentOfType<FunctionOpInterface>())

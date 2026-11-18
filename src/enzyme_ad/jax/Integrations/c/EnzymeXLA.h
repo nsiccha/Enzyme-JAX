@@ -178,6 +178,19 @@ typedef enum {
 MLIR_CAPI_EXPORTED MlirAttribute
 enzymexlaCommMpiOpAttrGet(MlirContext ctx, EnzymeXlaCommMpiOp op);
 
+MLIR_CAPI_EXPORTED MlirType enzymexlaCommNcclCommTypeGet(MlirContext ctx);
+
+typedef enum {
+  ENZYMEXLA_COMM_NCCL_RED_OP_SUM = 0,
+  ENZYMEXLA_COMM_NCCL_RED_OP_PROD = 1,
+  ENZYMEXLA_COMM_NCCL_RED_OP_MAX = 2,
+  ENZYMEXLA_COMM_NCCL_RED_OP_MIN = 3,
+  ENZYMEXLA_COMM_NCCL_RED_OP_AVG = 4,
+} EnzymeXlaCommNcclRedOp;
+
+MLIR_CAPI_EXPORTED MlirAttribute
+enzymexlaCommNcclRedOpAttrGet(MlirContext ctx, EnzymeXlaCommNcclRedOp op);
+
 //===----------------------------------------------------------------------===//
 // Other Ops / Attributes
 //===----------------------------------------------------------------------===//
@@ -242,6 +255,14 @@ typedef struct {
   bool enable_licm_optimization_passes;
   int64_t loop_unswitch_threshold;
   bool enable_pad_optimization_passes;
+  // Contractions written as reduce(mul) become dot_general. On GPU, XLA can
+  // run small contractions faster as fused reductions.
+  bool enable_dot_formation_passes;
+  // Constant propagation folds an op whose non-splat constant operand has
+  // other users (so the folded constant is added beside it) only when the
+  // result has at most this many elements. 0 folds such an op only when a
+  // non-splat operand dies with it.
+  int64_t max_reused_const_prop_size;
 
   // Passes to exclude by base name (e.g. "loop_unswitch"). The pointed-to
   // strings must remain valid for the duration of the call.

@@ -5,6 +5,8 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "llvm/ADT/APFloat.h"
@@ -77,6 +79,19 @@ homogeneousLeaves(Type type, const DataLayout &dataLayout,
 
 void commonLowerUpdateWithoutCorners(enzymexla::UpdateWithoutCornersOp extend,
                                      PatternRewriter &rewriter);
+
+/// Returns true if `op` performs an explicit halo exchange or SPMD collective
+/// window operation whose operand should not be redirected through another
+/// MultiRotate's neutral result.
+inline bool isHaloExchangeOp(Operation *op) {
+  if (isa<enzymexla::RotateOp, enzymexla::MultiRotateOp,
+          enzymexla::MultiSliceOp, enzymexla::MultiPadOp, enzymexla::WrapOp,
+          enzymexla::ExtendOp>(op))
+    return true;
+  if (auto call = dyn_cast<stablehlo::CustomCallOp>(op))
+    return call.getCallTargetName().starts_with("_SPMDInternalOp_");
+  return false;
+}
 
 using namespace ::mlir::enzyme::oputils;
 
@@ -584,6 +599,19 @@ inline std::pair<APInt, APInt> getProvableIntegerRange(Value v, int depth = 0) {
   Operation *def = v.getDefiningOp();
   if (!def || depth > 8)
     return typeRange();
+  // A range of arithmetic that may wrap the element type proves nothing.
+  auto fit = [&](std::pair<APInt, APInt> r) -> std::pair<APInt, APInt> {
+    auto [lo, hi] = typeRange();
+    if (r.first.slt(lo) || r.second.sgt(hi))
+      return typeRange();
+    return r;
+  };
+  if (auto iota = dyn_cast<stablehlo::IotaOp>(def)) {
+    int64_t extent = ty.getDimSize(iota.getIotaDimension());
+    if (ty.hasStaticShape() && extent > 0)
+      return fit({APInt(128, 0), APInt(128, extent - 1)});
+    return typeRange();
+  }
   if (isa<stablehlo::ReshapeOp, stablehlo::BroadcastInDimOp, stablehlo::SliceOp,
           stablehlo::DynamicSliceOp, stablehlo::ReverseOp,
           stablehlo::TransposeOp>(def))
@@ -623,16 +651,16 @@ inline std::pair<APInt, APInt> getProvableIntegerRange(Value v, int depth = 0) {
   if (auto add = dyn_cast<stablehlo::AddOp>(def)) {
     auto a = getProvableIntegerRange(add.getLhs(), depth + 1);
     auto b = getProvableIntegerRange(add.getRhs(), depth + 1);
-    return {a.first + b.first, a.second + b.second};
+    return fit({a.first + b.first, a.second + b.second});
   }
   if (auto sub = dyn_cast<stablehlo::SubtractOp>(def)) {
     auto a = getProvableIntegerRange(sub.getLhs(), depth + 1);
     auto b = getProvableIntegerRange(sub.getRhs(), depth + 1);
-    return {a.first - b.second, a.second - b.first};
+    return fit({a.first - b.second, a.second - b.first});
   }
   if (auto neg = dyn_cast<stablehlo::NegOp>(def)) {
     auto a = getProvableIntegerRange(neg.getOperand(), depth + 1);
-    return {-a.second, -a.first};
+    return fit({-a.second, -a.first});
   }
   if (auto mul = dyn_cast<stablehlo::MulOp>(def)) {
     for (int i = 0; i < 2; ++i) {
@@ -641,8 +669,8 @@ inline std::pair<APInt, APInt> getProvableIntegerRange(Value v, int depth = 0) {
         APInt c = cs.getSplatValue<APInt>().sext(128);
         auto a = getProvableIntegerRange(def->getOperand(1 - i), depth + 1);
         if (c.isNonNegative())
-          return {a.first * c, a.second * c};
-        return {a.second * c, a.first * c};
+          return fit({a.first * c, a.second * c});
+        return fit({a.second * c, a.first * c});
       }
     }
     return typeRange();
@@ -1310,6 +1338,19 @@ struct IotaLikeTensor {
 std::optional<IotaLikeTensor> detectIotaLikeTensor(DenseElementsAttr attr);
 std::optional<IotaLikeTensor> detectIotaLikeTensor(mlir::Value tensor);
 
+// The values of the integer computation `v` when it is built of constants
+// (and iotas, when `iotas`) alone, through elementwise integer arithmetic,
+// comparisons, selects and conversions, and reshapes, broadcasts, transposes,
+// slices and concatenations, as the reference interpreter would compute them;
+// none when it is not, or when its semantics are not plain (a divide by zero,
+// a shift past the width, arithmetic on booleans).
+// Each value on the way is computed on at most `maxElements` elements, except
+// that a value the operands of which are all splats is computed on one
+// element, whatever its size.
+std::optional<mlir::DenseElementsAttr>
+evaluateIntegerConstant(mlir::Value v, int64_t maxElements = 4096,
+                        bool iotas = true);
+
 // Represents a constant tensor that can be expressed as
 //   pad(innerTensor, paddingValue, lowPadding, highPadding,
 //   interiorPadding=[0,...])
@@ -1386,6 +1427,14 @@ bool allAccessesAreOnMainDiagonal(
     stablehlo::ReshapeOp op, llvm::SetVector<mlir::Operation *> &opsToReplace);
 bool allAccessesAreOnMainDiagonal(
     stablehlo::GatherOp op, llvm::SetVector<mlir::Operation *> &opsToReplace);
+
+// Gives each GPU block its own copy of the static shared memory `root` uses:
+// every address of an addrspace(3) global becomes the address of a
+// memref.alloca at the start of `blockBody`, one per global. `blockBody` is
+// the body of the loop over blocks, so it must dominate those uses.
+void privatizeSharedMemory(mlir::RewriterBase &rewriter, mlir::Operation *root,
+                           mlir::Block *blockBody,
+                           mlir::SymbolTableCollection &symbolTables);
 
 } // namespace enzyme
 
@@ -1583,6 +1632,25 @@ LogicalResult concatBroadcastSliceSimplify(PatternRewriter &rewriter,
                                            SmallVectorImpl<Value> &operands,
                                            int64_t dim,
                                            SmallVectorImpl<Value> &newOperands);
+
+// What concat_dim(values[0] at the window of windows[0], values[1] at the
+// window of windows[1], ...) amounts to, windows[i] being a slice whose
+// window is taken of values[i] (null: all of it, or the window of values[i]
+// itself when it is a slice). One value when the windows are adjacent
+// windows of one value in order (canMergeSlicesAlongAxis), when the values
+// are constants of one splat, or when they are broadcasts of one scalar
+// (both also through slices); otherwise a concatenate.
+enum class ConcatPieces { OneSplat, OneBroadcast, OneWindow, Concatenate };
+ConcatPieces classifyConcatPieces(ArrayRef<Value> values,
+                                  ArrayRef<stablehlo::SliceOp> windows,
+                                  int64_t dim);
+// Builds that: the one constant, broadcast or slice (the value itself when
+// the windows cover it), or else the concatenate of the windows with
+// adjacent slices merged (concatSliceSimplify).
+Value ConcatenatePiecesCreate(PatternRewriter &rewriter, Location loc,
+                              ArrayRef<Value> values,
+                              ArrayRef<stablehlo::SliceOp> windows,
+                              int64_t dim);
 
 Value getIdentityValue(OpBuilder &builder, Location loc, Type elemType,
                        Operation *op);

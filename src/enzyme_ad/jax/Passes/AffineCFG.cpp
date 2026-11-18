@@ -762,7 +762,7 @@ AffineApplyNormalizer::AffineApplyNormalizer(AffineMap map,
     }
     opsTodos.pop_back();
     if (!front)
-      op->dump();
+      llvm::errs() << *op << "\n";
     assert(front);
     if (condIf) {
       // ops now holds the legalized condition and arms: replaceOp rewrote the
@@ -1800,7 +1800,7 @@ bool isValidIndex(Value val, Region *scope) {
 
     auto *parentOp = owner->getParentOp();
     if (!parentOp) {
-      owner->dump();
+      llvm::errs() << *owner << "\n";
       llvm::errs() << " ba: " << ba << "\n";
     }
     assert(parentOp);
@@ -2247,19 +2247,26 @@ struct MoveRMWToAffine : public OpRewritePattern<memref::AtomicRMWOp> {
 // A rebuilt access keeps everything the old one said about itself. All the
 // discardable attributes ride over as they are. Alignment needs the extra
 // clause only because on memref.load/store it is an inherent attribute, held
-// in properties where getDiscardableAttrs does not see it; going to an affine
-// op, which has no inherent slot for it, it is lifted into the discardable
-// dictionary, where lower-aligned-affine-accesses knows to find it.
+// in properties where getDiscardableAttrs does not see it; the affine op owns
+// one as well, and it has to be set as that: setAttr of an unset owned
+// attribute lands in the discardable dictionary, where getAlignment() does
+// not look.
 static void copyAccessAttrs(Operation *from, Operation *to) {
   for (NamedAttribute attr : from->getDiscardableAttrs())
     to->setAttr(attr.getName(), attr.getValue());
-  if (auto load = dyn_cast<memref::LoadOp>(from)) {
-    if (auto align = load.getAlignmentAttr())
-      to->setAttr("alignment", align);
-  } else if (auto store = dyn_cast<memref::StoreOp>(from)) {
-    if (auto align = store.getAlignmentAttr())
-      to->setAttr("alignment", align);
-  }
+  IntegerAttr align;
+  if (auto load = dyn_cast<memref::LoadOp>(from))
+    align = load.getAlignmentAttr();
+  else if (auto store = dyn_cast<memref::StoreOp>(from))
+    align = store.getAlignmentAttr();
+  if (!align)
+    return;
+  if (auto load = dyn_cast<affine::AffineLoadOp>(to))
+    load.setAlignmentAttr(align);
+  else if (auto store = dyn_cast<affine::AffineStoreOp>(to))
+    store.setAlignmentAttr(align);
+  else
+    to->setAttr("alignment", align);
 }
 
 struct MoveLoadToAffine : public OpRewritePattern<memref::LoadOp> {
@@ -4661,7 +4668,6 @@ AffineExpr optimizeExprWithBounds(AffineExpr expr,
 
 static AffineMap optimizeMap(AffineMap map,
                              llvm::ArrayRef<AffineDimDescriptor> dims) {
-  llvm::DenseMap<AffineExpr, AffineExpr> replacements;
   SmallVector<AffineExpr> todo;
   for (auto expr : map.getResults())
     todo.push_back(optimizeExprWithBounds(expr, dims));
@@ -6290,10 +6296,13 @@ struct SinkStoreInIf : public OpRewritePattern<scf::IfOp> {
       rewriter.eraseOp(elseYield);
     }
 
+    // Of the same address as both stores, so what either said of it holds.
     affine::AffineStoreOp::create(
         rewriter, thenStore.getLoc(), newIfOp.getResult(ifOp.getNumResults()),
         thenStore.getMemref(), thenStore.getAffineMap(),
-        thenStore.getMapOperands());
+        thenStore.getMapOperands(),
+        thenStore.getMaybeAlign() ? thenStore.getMaybeAlign()
+                                  : elseStore.getMaybeAlign());
 
     rewriter.replaceOp(ifOp,
                        newIfOp.getResults().slice(0, ifOp.getNumResults()));
@@ -6395,10 +6404,13 @@ struct SinkStoreInAffineIf : public OpRewritePattern<affine::AffineIfOp> {
       rewriter.eraseOp(elseYield);
     }
 
+    // Of the same address as both stores, so what either said of it holds.
     affine::AffineStoreOp::create(
         rewriter, thenStore.getLoc(), newIfOp.getResult(ifOp.getNumResults()),
         thenStore.getMemref(), thenStore.getAffineMap(),
-        thenStore.getMapOperands());
+        thenStore.getMapOperands(),
+        thenStore.getMaybeAlign() ? thenStore.getMaybeAlign()
+                                  : elseStore.getMaybeAlign());
 
     rewriter.replaceOp(ifOp,
                        newIfOp.getResults().slice(0, ifOp.getNumResults()));
@@ -6814,7 +6826,7 @@ struct FoldAppliesIntoLoad : public OpRewritePattern<memref::LoadOp> {
     for (NamedAttribute attr : attrs)
       newLoad->setAttr(attr.getName(), attr.getValue());
     if (alignAttr)
-      newLoad->setAttr("alignment", alignAttr);
+      newLoad.setAlignmentAttr(alignAttr);
     return success();
   }
 };
@@ -7023,6 +7035,32 @@ static bool storesApart(affine::AffineStoreOp a, affine::AffineStoreOp b) {
       apart = true;
   }
   return apart;
+}
+
+// The loops around `op` within its affine scope, as the dependence analysis
+// counts them (the parallelization's, vendored below).
+static unsigned getNestingDepth(Operation *op);
+
+// Whether `load`, within `forOp`, may read in some iteration what `store`
+// (in the body of `forOp`) wrote in the same or an earlier iteration: the
+// dependence that moving the store past the loop would break. Over the loops
+// outside `forOp` the two run as they did, so only the dependences `forOp`
+// carries, and those within one of its iterations, are asked; a load of
+// B[k][j] over k > i never reads the store of B[i][j].
+static bool loadMayReadStoreInLoop(affine::AffineForOp forOp,
+                                   affine::AffineStoreOp store,
+                                   affine::AffineReadOpInterface load) {
+  if (load.getMemRef() != store.getMemRef())
+    return false;
+  MemRefAccess src(store), dst(load);
+  // the loops around `forOp`, and `forOp`: those common to the two
+  unsigned common = ::getNestingDepth(forOp) + 1;
+  for (unsigned depth : {common, common + 1}) {
+    DependenceResult result = checkMemrefAccessDependence(src, dst, depth);
+    if (result.value != DependenceResult::NoDependence)
+      return true;
+  }
+  return false;
 }
 
 struct AffineForReductionIter : public OpRewritePattern<affine::AffineForOp> {
@@ -7276,9 +7314,17 @@ struct AffineForReductionSink : public OpRewritePattern<affine::AffineForOp> {
           continue;
         if (!forOp->isAncestor(user))
           continue;
-        auto other = dyn_cast<affine::AffineStoreOp>(user);
-        if (!other || !storesApart(store, other))
+        // Another store writes a different element in every iteration; a
+        // load never reads what the store wrote within the loop.
+        if (auto other = dyn_cast<affine::AffineStoreOp>(user)) {
+          if (!storesApart(store, other))
+            legal = false;
+        } else if (auto load = dyn_cast<affine::AffineReadOpInterface>(user)) {
+          if (loadMayReadStoreInLoop(forOp, store, load))
+            legal = false;
+        } else {
           legal = false;
+        }
       }
       if (legal)
         stores.push_back(store);
@@ -8206,6 +8252,7 @@ void mlir::enzyme::populateAffineCFGPatterns(
   rpl.add<SimplifyAndOr, SimplifyOrAnd>(context, 2);
   rpl.add<AffineForCopyCarry, SCFForCopyCarry>(context, 2);
   rpl.add<AffineForDeadCarry>(context, 2);
+  populateAffineIfDeadResultsPatterns(rpl);
   // ahead of the parallelization, which would otherwise take the loop first
   rpl.add<AffineForAtMostOnce>(context, 3);
   rpl.add<HoistForOutOfRunsCheck, HoistParallelOutOfRunsCheck>(context, 2);

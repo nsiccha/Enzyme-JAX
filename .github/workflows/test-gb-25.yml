@@ -79,7 +79,7 @@ jobs:
           # Remove all spaces
           ARTIFACT_INDEX=${ARTIFACT_INDEX// /}
           echo "ARTIFACT_INDEX=${ARTIFACT_INDEX}" >> "${GITHUB_ENV}"
-      - uses: bazel-contrib/setup-bazel@0.19.0
+      - uses: bazel-contrib/setup-bazel@0.19.1
         name: Set up Bazel
         with:
           # Avoid downloading Bazel every time.
@@ -139,16 +139,6 @@ jobs:
           julia --project --color=yes -e 'using Pkg; Pkg.instantiate()'
           julia --project --color=yes -O0 build_local.jl --cc=clang --gcc_host_compiler_path= --push-cache
         working-directory: ${{ env.REACTANT_DIR }}/deps
-      - name: Copy libdevice
-        if: ${{ contains(matrix.os, 'a100') }}
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          if [[ ! -e bazel-bin/cuda/nvvm/libdevice/libdevice.10.bc ]]; then
-              mkdir -pv bazel-bin/cuda/nvvm/libdevice
-              cp -v bazel-bin/libReactantExtra.so.runfiles/cuda_nvcc/nvvm/libdevice/libdevice.10.bc bazel-bin/cuda/nvvm/libdevice/libdevice.10.bc
-          fi
-        working-directory: ${{ env.REACTANT_DIR }}/deps/ReactantExtra
       - name: Checkout GB-25
         uses: actions/checkout@v7
         with:
@@ -233,12 +223,12 @@ jobs:
               ALL_TO_ALL_THRESHOLD=0
               ALL_GATHER_THRESHOLD=0
               ALL_REDUCE_THRESHOLD=0
-              COLLECTIVE_PERMUTE_THRESHOLD=299
+              COLLECTIVE_PERMUTE_THRESHOLD=44
           elif [[ '${{ contains(matrix.os, 'tpu') }}' == 'true' ]]; then
               ALL_TO_ALL_THRESHOLD=0
               ALL_GATHER_THRESHOLD=0
               ALL_REDUCE_THRESHOLD=0
-              COLLECTIVE_PERMUTE_THRESHOLD=832
+              COLLECTIVE_PERMUTE_THRESHOLD=1154
           fi
 
           for OP in "all-to-all" "all-gather" "all-reduce" "%collective-permute-start.* ="; do

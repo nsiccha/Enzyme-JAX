@@ -19,6 +19,9 @@ inline LogicalResult verifyResultsAliasOperands(Operation *op,
     if (!alias)
       return op->emitOpError("output_operand_aliases must contain "
                              "#stablehlo.output_operand_alias attributes");
+    if (!alias.getOperandTupleIndices().empty())
+      return op->emitOpError() << "operand tuple indices are not supported in "
+                                  "output_operand_aliases";
     if (alias.getOperandIndex() < 0 ||
         alias.getOperandIndex() >= (int64_t)numInputs)
       return op->emitOpError("output_operand_alias refers to operand ")
@@ -42,6 +45,18 @@ inline LogicalResult verifyResultsAliasOperands(Operation *op,
   return success();
 }
 
+/// Returns, for each input of `call`, the index of the callee argument it is
+/// passed as, or -1 for token inputs, which only order the call and have no
+/// callee argument.
+template <typename OpTy>
+static SmallVector<int64_t> getCalleeArgIndices(OpTy call) {
+  SmallVector<int64_t> indices;
+  int64_t next = 0;
+  for (Value input : call.getInputs())
+    indices.push_back(isa<stablehlo::TokenType>(input.getType()) ? -1 : next++);
+  return indices;
+}
+
 /// Replace cast(subindex(x, InterimType), FinalType) with subindex(x,
 /// FinalType)
 template <typename OpTy>
@@ -52,13 +67,31 @@ public:
   OpTy create(PatternRewriter &rewriter, OpTy launchOp, ArrayRef<Type> resTys,
               ArrayAttr outputAliases) const;
 
-  LogicalResult matchAndRewrite(OpTy launchOp,
-                                PatternRewriter &rewriter) const override {
+  // Whether each operand of `launchOp` is never written by it.
+  BitVector getReadOnlyOperands(OpTy launchOp) const {
     SymbolTableCollection symbolTable;
     symbolTable.getSymbolTable(
         ((Operation *)launchOp)->getParentOfType<ModuleOp>());
     auto fn = cast<FunctionOpInterface>(
         symbolTable.lookupNearestSymbolFrom(launchOp, launchOp.getFnAttr()));
+    BitVector readonly(launchOp.getInputs().size(), false);
+    SmallVector<int64_t> argIndices = getCalleeArgIndices(launchOp);
+    for (unsigned i = 0, e = readonly.size(); i < e; ++i) {
+      // Tokens are threaded through the call and so are never read only.
+      if (argIndices[i] < 0)
+        continue;
+      unsigned arg = argIndices[i];
+      readonly[i] =
+          fn.front().getArgument(arg).use_empty() ||
+          fn.getArgAttr(arg, LLVM::LLVMDialect::getReadonlyAttrName()) ||
+          fn.getArgAttr(arg, LLVM::LLVMDialect::getReadnoneAttrName());
+    }
+    return readonly;
+  }
+
+  LogicalResult matchAndRewrite(OpTy launchOp,
+                                PatternRewriter &rewriter) const override {
+    BitVector readonly = getReadOnlyOperands(launchOp);
 
     auto operand_aliases = launchOp.getOutputOperandAliases();
     assert(operand_aliases.size() == launchOp.getNumResults());
@@ -66,17 +99,7 @@ public:
     size_t outputs = launchOp.getNumResults();
     for (auto alias_attr : operand_aliases) {
       auto alias = cast<stablehlo::OutputOperandAliasAttr>(alias_attr);
-      auto operandIndex = alias.getOperandIndex();
-
-      auto operand = fn.front().getArgument(operandIndex);
-      bool readonly =
-          operand.use_empty() ||
-          fn.getArgAttr(operandIndex,
-                        LLVM::LLVMDialect::getReadonlyAttrName()) ||
-          fn.getArgAttr(operandIndex, LLVM::LLVMDialect::getReadnoneAttrName());
-
-      if (readonly) {
-
+      if (readonly[alias.getOperandIndex()]) {
         changed = true;
         outputs--;
       }
@@ -91,18 +114,10 @@ public:
       auto alias = cast<stablehlo::OutputOperandAliasAttr>(en.value());
       auto operandIndex = alias.getOperandIndex();
 
-      auto operand = fn.front().getArgument(operandIndex);
       assert(launchOp.getInputs()[operandIndex].getType() ==
              launchOp.getResultTypes()[idx]);
-      bool readonly =
-          operand.use_empty() ||
-          fn.getArgAttr(operandIndex,
-                        LLVM::LLVMDialect::getReadonlyAttrName()) ||
-          fn.getArgAttr(operandIndex, LLVM::LLVMDialect::getReadnoneAttrName());
-
-      if (readonly) {
+      if (readonly[operandIndex])
         continue;
-      }
       resTys.push_back(launchOp.getResultTypes()[idx]);
       if (outputs == 1) {
         outputAliases.push_back(stablehlo::OutputOperandAliasAttr::get(
@@ -123,15 +138,7 @@ public:
     for (auto alias_attr : operand_aliases) {
       auto alias = cast<stablehlo::OutputOperandAliasAttr>(alias_attr);
       auto operandIndex = alias.getOperandIndex();
-
-      auto operand = fn.front().getArgument(operandIndex);
-      bool readonly =
-          operand.use_empty() ||
-          fn.getArgAttr(operandIndex,
-                        LLVM::LLVMDialect::getReadonlyAttrName()) ||
-          fn.getArgAttr(operandIndex, LLVM::LLVMDialect::getReadnoneAttrName());
-
-      if (readonly) {
+      if (readonly[operandIndex]) {
         replacements.push_back(launchOp.getInputs()[operandIndex]);
         continue;
       } else {
@@ -190,6 +197,75 @@ public:
   void updateOperandSegmentSizes(OpTy call, int32_t numLiveOperands,
                                  PatternRewriter &rewriter) const;
 
+  // The name of the attribute of `call` holding one dictionary per input.
+  StringAttr getInputAttrsName(OpTy call) const {
+    return call.getArgAttrsAttrName();
+  }
+
+  // Erases the inputs `deadArgs` of `call`, which no result is read from.
+  void eraseInputs(OpTy call, const BitVector &deadArgs,
+                   PatternRewriter &rewriter) const {
+    BitVector nonLiveCallOperands(call.getNumOperands(), false);
+    for (int index : deadArgs.set_bits())
+      nonLiveCallOperands.set(call.getInputs().getBeginOperandIndex() + index);
+
+    int32_t numLiveOperands = 0;
+    for (int32_t idx = call.getInputs().getBeginOperandIndex();
+         idx < nonLiveCallOperands.size(); idx++) {
+      if (nonLiveCallOperands[idx])
+        continue;
+      numLiveOperands++;
+    }
+
+    SmallVector<Attribute> outputAliases;
+    auto operand_aliases = call.getOutputOperandAliases();
+
+    for (auto alias_attr : operand_aliases) {
+      auto alias = cast<stablehlo::OutputOperandAliasAttr>(alias_attr);
+      auto operandIndex = alias.getOperandIndex();
+      size_t nextIndex = operandIndex;
+      for (int index : deadArgs.set_bits()) {
+        if (index <= operandIndex)
+          nextIndex--;
+      }
+      outputAliases.push_back(stablehlo::OutputOperandAliasAttr::get(
+          call->getContext(), alias.getOutputTupleIndices(), nextIndex,
+          alias.getOperandTupleIndices()));
+    }
+
+    rewriter.modifyOpInPlace(call, [&]() {
+      call->eraseOperands(nonLiveCallOperands);
+      updateOperandSegmentSizes(call, numLiveOperands, rewriter);
+      auto filterLive = [&](ArrayAttr attrs) -> ArrayAttr {
+        if (!attrs || attrs.size() != deadArgs.size())
+          return attrs;
+        SmallVector<Attribute> live;
+        for (auto [i, a] : llvm::enumerate(attrs))
+          if (!deadArgs[i])
+            live.push_back(a);
+        return ArrayAttr::get(call->getContext(), live);
+      };
+      if (auto layouts =
+              dyn_cast_or_null<ArrayAttr>(call.getOperandLayoutsAttr()))
+        call.setOperandLayoutsAttr(filterLive(layouts));
+      StringAttr inputAttrsName = getInputAttrsName(call);
+      if (auto inputAttrs =
+              call->template getAttrOfType<ArrayAttr>(inputAttrsName))
+        call->setAttr(inputAttrsName, filterLive(inputAttrs));
+      call.setOutputOperandAliasesAttr(
+          ArrayAttr::get(call->getContext(), outputAliases));
+    });
+  }
+
+  // The input index of each callee argument of `call`, skipping token inputs.
+  static SmallVector<int64_t> getInputIndicesOfArgs(OpTy call) {
+    SmallVector<int64_t> inputs;
+    for (auto [i, arg] : llvm::enumerate(getCalleeArgIndices(call)))
+      if (arg >= 0)
+        inputs.push_back(i);
+    return inputs;
+  }
+
   LogicalResult matchAndRewrite(OpTy launchOp,
                                 PatternRewriter &rewriter) const override {
     SymbolTableCollection symbolTable;
@@ -215,9 +291,12 @@ public:
     // Do it first on the current launch to avoid costly collection of all
     // symbol users if already we can early prove there are no changes.
     {
+      SmallVector<int64_t> inputOfArg = getInputIndicesOfArgs(launchOp);
+      if (inputOfArg.size() != fn.front().getNumArguments())
+        return failure();
       bool potentialChanged = false;
       for (auto arg : fn.front().getArguments()) {
-        auto operandIndex = arg.getArgNumber();
+        auto operandIndex = inputOfArg[arg.getArgNumber()];
         bool readnone = arg.use_empty();
         if (!readnone)
           continue;
@@ -245,10 +324,15 @@ public:
     if (!use_opt)
       return failure();
     calls = std::move(*use_opt);
+    // For each call, the input index of every callee argument.
+    SmallVector<SmallVector<int64_t>> inputOfArgPerCall;
     for (auto launchOp : calls) {
       auto operand_aliases2 = launchOp.getOutputOperandAliases();
       (void)operand_aliases2;
       assert(operand_aliases2.size() == launchOp.getNumResults());
+      inputOfArgPerCall.push_back(getInputIndicesOfArgs(launchOp));
+      if (inputOfArgPerCall.back().size() != fn.front().getNumArguments())
+        return failure();
     }
 
     BitVector deadArgs(fn.front().getNumArguments(), false);
@@ -258,12 +342,12 @@ public:
       if (!readnone)
         continue;
 
-      for (auto call : calls) {
+      for (auto [call, inputOfArg] : llvm::zip(calls, inputOfArgPerCall)) {
         auto operand_aliases = call.getOutputOperandAliases();
         for (auto alias_attr : operand_aliases) {
           auto alias = cast<stablehlo::OutputOperandAliasAttr>(alias_attr);
           auto aliasOperandIndex = alias.getOperandIndex();
-          if (aliasOperandIndex == operandIndex) {
+          if (aliasOperandIndex == inputOfArg[operandIndex]) {
             goto notlegal;
           }
         }
@@ -290,42 +374,11 @@ public:
       }
     });
 
-    for (auto call : calls) {
-      BitVector nonLiveCallOperands(call.getNumOperands(), false);
-      for (int index : deadArgs.set_bits())
-        nonLiveCallOperands.set(call.getInputs().getBeginOperandIndex() +
-                                index);
-
-      int32_t numLiveOperands = 0;
-      for (int32_t idx = call.getInputs().getBeginOperandIndex();
-           idx < nonLiveCallOperands.size(); idx++) {
-        if (nonLiveCallOperands[idx])
-          continue;
-        numLiveOperands++;
-      }
-
-      SmallVector<Attribute> outputAliases;
-      auto operand_aliases = call.getOutputOperandAliases();
-
-      for (auto alias_attr : operand_aliases) {
-        auto alias = cast<stablehlo::OutputOperandAliasAttr>(alias_attr);
-        auto operandIndex = alias.getOperandIndex();
-        size_t nextIndex = operandIndex;
-        for (int index : deadArgs.set_bits()) {
-          if (index <= operandIndex)
-            nextIndex--;
-        }
-        outputAliases.push_back(stablehlo::OutputOperandAliasAttr::get(
-            call->getContext(), alias.getOutputTupleIndices(), nextIndex,
-            alias.getOperandTupleIndices()));
-      }
-
-      rewriter.modifyOpInPlace(call, [&]() {
-        call->eraseOperands(nonLiveCallOperands);
-        updateOperandSegmentSizes(call, numLiveOperands, rewriter);
-        call.setOutputOperandAliasesAttr(
-            ArrayAttr::get(call->getContext(), outputAliases));
-      });
+    for (auto [call, inputOfArg] : llvm::zip(calls, inputOfArgPerCall)) {
+      BitVector deadInputs(call.getInputs().size(), false);
+      for (int arg : deadArgs.set_bits())
+        deadInputs.set(inputOfArg[arg]);
+      eraseInputs(call, deadInputs, rewriter);
     }
     return success();
   }

@@ -19,6 +19,19 @@ def LowerCommToJITPass : Pass<"lower-comm-to-jit"> {
     "enzymexla::EnzymeXLADialect",
     "LLVM::LLVMDialect",
   ];
+  let options = [
+    Option<"mpi_request_width", "mpi_request_width", "unsigned", /*default=*/"64",
+           "Bit width of `MPI_Request` in the target MPI implementation "
+           "(e.g. 32 for MPICH, 64 for Open MPI on 64-bit platforms)">,
+  ];
+}
+
+def LegalizeMpiToNcclPass : Pass<"legalize-mpi-to-nccl"> {
+  let summary = "Lower comm.mpi ops to comm.nccl ops";
+  let dependentDialects = [
+    "comm::CommDialect",
+    "stablehlo::StablehloDialect",
+  ];
 }
 
 #endif // ENZYMEXLA_PASSES_COMM_PASSES_TD

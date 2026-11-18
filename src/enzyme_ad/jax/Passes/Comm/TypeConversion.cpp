@@ -7,19 +7,36 @@ Type convertMpiComm(MpiCommType type) {
   return RankedTensorType::get({}, IntegerType::get(type.getContext(), 64));
 }
 
+Type convertNcclComm(NcclCommType type) {
+  return RankedTensorType::get({}, IntegerType::get(type.getContext(), 64));
+}
+
 Type convertMpiOp(MpiOpType type) {
   return RankedTensorType::get({}, IntegerType::get(type.getContext(), 64));
 }
 
-Type convertMpiRequest(MpiRequestType type) {
-  return RankedTensorType::get({}, IntegerType::get(type.getContext(), 64));
+Type convertMpiRequest(MpiRequestType type, unsigned requestWidth) {
+  return RankedTensorType::get(
+      {}, IntegerType::get(type.getContext(), requestWidth));
 }
 
-StablehloTypeConverter::StablehloTypeConverter() {
+StablehloTypeConverter::StablehloTypeConverter(unsigned requestWidth) {
   addConversion([](Type type) { return type; });
   addConversion(convertMpiComm);
+  addConversion(convertNcclComm);
   addConversion(convertMpiOp);
-  addConversion(convertMpiRequest);
+  addConversion([requestWidth](MpiRequestType type) {
+    return convertMpiRequest(type, requestWidth);
+  });
+}
+
+Type convertCommMpiToNccl(MpiCommType type) {
+  return NcclCommType::get(type.getContext());
+}
+
+MpiToNcclTypeConverter::MpiToNcclTypeConverter() {
+  addConversion([](Type type) { return type; });
+  addConversion(convertCommMpiToNccl);
 }
 
 } // namespace mlir::comm
