@@ -3207,6 +3207,8 @@ template <typename T> struct LICM : public CheckedOpRewritePattern<T, LICM<T>> {
     auto whileOp = op->template getParentOfType<stablehlo::WhileOp>();
     if (!whileOp)
       return failure();
+    if (isOrContainsPreservedLoop(whileOp))
+      return failure();
     for (auto operand : op->getOperands()) {
       if (!definedOutside(operand, whileOp))
         return failure();
@@ -3240,6 +3242,8 @@ struct LICMElementwise
   LogicalResult matchAndRewriteImpl(Operation *op,
                                     PatternRewriter &rewriter) const {
     if (!isa<stablehlo::WhileOp>(op->getParentOp()))
+      return failure();
+    if (isOrContainsPreservedLoop(op->getParentOp()))
       return failure();
     for (auto operand : op->getOperands()) {
       if (!definedOutside(operand, op->getParentOp()))
@@ -28057,6 +28061,8 @@ struct WhileLICM
 
   LogicalResult matchAndRewriteImpl(stablehlo::WhileOp op,
                                     PatternRewriter &rewriter) const {
+    if (isOrContainsPreservedLoop(op))
+      return failure();
     SmallVector<unsigned> operands;
 
     Block *cond = &op.getCond().front(), *body = &op.getBody().front();
@@ -35338,6 +35344,12 @@ struct UnaryElementwiseScatterSimplify final
   }
 };
 
+// Moving elementwise work across a gather according to its input/output sizes
+// changes the graph seen by AD. A frontend can require the authored order so
+// shape specialization does not introduce extra derivative work or regions.
+constexpr llvm::StringLiteral kPreserveGatherOrderAttrName =
+    "enzymexla.preserve_gather_order";
+
 struct GatherElementwise
     : public CheckedOpRewritePattern<stablehlo::GatherOp, GatherElementwise> {
   using CheckedOpRewritePattern<stablehlo::GatherOp,
@@ -35345,6 +35357,8 @@ struct GatherElementwise
 
   LogicalResult matchAndRewriteImpl(stablehlo::GatherOp op,
                                     PatternRewriter &rewriter) const {
+    if (op->hasAttr(kPreserveGatherOrderAttrName))
+      return failure();
     auto gatherInput = op.getOperand();
     auto defOp = gatherInput.getDefiningOp();
     if (!defOp || !hasTraitElementwise(defOp))
@@ -35406,6 +35420,8 @@ struct ElementwiseGather
       if (!defOp || !isOnlyUsedInOperation(defOp, op)) {
         return failure();
       }
+      if (defOp->hasAttr(kPreserveGatherOrderAttrName))
+        return failure();
 
       auto gatherOutType = cast<RankedTensorType>(defOp.getType());
       auto gatherInType = cast<RankedTensorType>(defOp.getOperand().getType());
@@ -39170,6 +39186,11 @@ struct RemoveNoOpsFromWhileLoop
 
   LogicalResult matchAndRewriteImpl(stablehlo::WhileOp whileOp,
                                     PatternRewriter &rewriter) const {
+    // Shape-derived bounds must not specialize away the conditional body of
+    // a retained loop, including loops with a single iteration.
+    if (whileOp->hasAttr(kPreserveLoopAttrName))
+      return rewriter.notifyMatchFailure(whileOp, "retained loop");
+
     auto info = WhileLoopInfo(whileOp);
     auto computeInfoSuccess = info.computeInfo();
     if (computeInfoSuccess.failed()) {

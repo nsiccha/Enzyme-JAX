@@ -54,8 +54,8 @@ LogicalResult unrollWhileOp(mlir::stablehlo::WhileOp op, RewriterBase &rewriter,
 
   // A checkpoint request must retain the primal loop before AD can build its
   // bounded tape. After AD, unrolling a segment would undo that memory bound.
-  // See isCheckpointedLoop.
-  if (isOrContainsCheckpointedLoop(op))
+  // Retained frontend loops also require control flow.
+  if (isOrContainsPreservedLoop(op))
     return failure();
 
   WhileLoopInfo info(op);

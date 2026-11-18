@@ -1633,8 +1633,8 @@ LogicalResult GreedyWhileLoopBatchFission::matchAndRewriteImpl(
   // divides the trip count evenly (LoopCheckpointing::segmentLength returns the
   // constant nInner rather than a select), so without this guard peak memory
   // silently depends on that divisibility.
-  if (isOrContainsCheckpointedLoop(whileOp))
-    return rewriter.notifyMatchFailure(whileOp, "checkpointed loop");
+  if (isOrContainsPreservedLoop(whileOp))
+    return rewriter.notifyMatchFailure(whileOp, "retained loop");
 
   auto info = WhileLoopInfo(whileOp);
   auto computeInfoSuccess = info.computeInfo();
@@ -2633,8 +2633,8 @@ mlir::LogicalResult WhileElementwiseReductionToReduce::matchAndRewriteImpl(
     stablehlo::WhileOp whileOp, PatternRewriter &rewriter) const {
   // Same reasoning as GreedyWhileLoopBatchFission: lifting the reduction
   // materializes every iteration of the segment at once.
-  if (isOrContainsCheckpointedLoop(whileOp))
-    return rewriter.notifyMatchFailure(whileOp, "checkpointed loop");
+  if (isOrContainsPreservedLoop(whileOp))
+    return rewriter.notifyMatchFailure(whileOp, "retained loop");
 
   auto &body = whileOp.getBody().front();
   auto term = body.getTerminator();
