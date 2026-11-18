@@ -6094,7 +6094,8 @@ public:
     // path, so over-allocation is safe.
     int64_t numIters;
     if (!countedLoop) {
-      numIters = *tripBound;
+      // Even a statically dead body must contain a well-typed one-element slice.
+      numIters = std::max<int64_t>(1, *tripBound);
     } else if (info.isConstant()) {
       numIters = info.getConstantNumIters();
     } else {
