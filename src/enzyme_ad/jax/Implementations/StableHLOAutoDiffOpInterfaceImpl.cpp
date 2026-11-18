@@ -3766,18 +3766,67 @@ public:
 // (integer or floating point), or an explicit `enzymexla.max_trip_count`
 // attribute on the loop. Slots beyond the actual trip count are never read on
 // the reverse path, so over-allocation is safe.
-static std::optional<double> splatConstantAsDouble(Value v) {
-  DenseElementsAttr attr;
-  if (!matchPattern(v, m_Constant(&attr)) || !attr.isSplat())
+// Infer a trip bound in the comparison's own arithmetic. Overflow or rounding
+// can keep a counter below its limit indefinitely.
+static std::optional<int64_t>
+boundedSteps(stablehlo::CompareOp cmp, Value initial, Value increment,
+             bool inclusive) {
+  DenseElementsAttr start, step, limit;
+  if (!matchPattern(initial, m_Constant(&start)) || !start.isSplat() ||
+      !matchPattern(increment, m_Constant(&step)) || !step.isSplat() ||
+      !matchPattern(cmp.getRhs(), m_Constant(&limit)) || !limit.isSplat())
     return std::nullopt;
-  Type et = attr.getElementType();
-  if (et.isInteger())
-    return (double)attr.getSplatValue<APInt>().getSExtValue();
-  if (isa<FloatType>(et)) {
-    APFloat f = attr.getSplatValue<APFloat>();
-    bool lossy = false;
-    f.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven, &lossy);
-    return f.convertToDouble();
+  auto compareType = cmp.getCompareType();
+  Type type = start.getElementType();
+  if (auto it = dyn_cast<IntegerType>(type)) {
+    using stablehlo::ComparisonType;
+    bool uns = it.isUnsigned();
+    if (compareType && *compareType != ComparisonType::NOTYPE) {
+      if (*compareType != ComparisonType::SIGNED &&
+          *compareType != ComparisonType::UNSIGNED)
+        return std::nullopt;
+      uns = *compareType == ComparisonType::UNSIGNED;
+    }
+    unsigned width = it.getWidth();
+    auto widen = [&](APInt n) {
+      return uns ? n.zext(width + 2) : n.sext(width + 2);
+    };
+    APInt a = widen(start.getSplatValue<APInt>());
+    APInt b = widen(limit.getSplatValue<APInt>());
+    APInt delta = widen(step.getSplatValue<APInt>());
+    if (!delta.isStrictlyPositive())
+      return std::nullopt;
+    if (inclusive)
+      ++b;
+    if (a.sge(b))
+      return 0;
+    APInt count = (b - a + delta - 1).udiv(delta);
+    APInt last = a + count * delta;
+    if (last != widen(last.trunc(width)) || count.getActiveBits() > 63)
+      return std::nullopt;
+    return static_cast<int64_t>(count.getZExtValue());
+  }
+  if (!isa<FloatType>(type) ||
+      (compareType && *compareType != stablehlo::ComparisonType::NOTYPE &&
+       *compareType != stablehlo::ComparisonType::FLOAT))
+    return std::nullopt;
+  APFloat value = start.getSplatValue<APFloat>();
+  APFloat delta = step.getSplatValue<APFloat>();
+  APFloat end = limit.getSplatValue<APFloat>();
+  if (!value.isFinite() || !delta.isFinite() || !end.isFinite() ||
+      delta.isNegative() || delta.isZero() || delta.isDenormal() ||
+      value.isDenormal() || end.isDenormal())
+    return std::nullopt;
+  // Bound compile-time work. Longer or inexact floating inductions can use
+  // an independent integer conjunct or the frontend's max_trip_count.
+  for (int64_t n = 0; n <= 4096; ++n) {
+    auto order = value.compare(end);
+    if (order == APFloat::cmpGreaterThan ||
+        (!inclusive && order == APFloat::cmpEqual))
+      return n;
+    if (value.add(delta, APFloat::rmNearestTiesToEven) != APFloat::opOK ||
+        value.isDenormal())
+      break;
   }
   return std::nullopt;
 }
@@ -3790,7 +3839,7 @@ static std::optional<unsigned> findIterationCounter(stablehlo::WhileOp op) {
   for (unsigned n = op->getNumOperands(); n > 0; --n) {
     unsigned i = n - 1;
     auto TT = dyn_cast<RankedTensorType>(op->getOperand(i).getType());
-    if (!TT || TT.getRank() != 0 || !TT.getElementType().isInteger())
+    if (!TT || TT.getRank() != 0 || !TT.getElementType().isSignlessInteger(64))
       continue;
     if (!matchPattern(op->getOperand(i), m_Zero()))
       continue;
@@ -3810,7 +3859,8 @@ static std::optional<unsigned> findIterationCounter(stablehlo::WhileOp op) {
 
 static std::optional<int64_t> staticTripCountBound(stablehlo::WhileOp op) {
   if (auto attr = op->getAttrOfType<IntegerAttr>("enzymexla.max_trip_count"))
-    return attr.getInt();
+    if (!attr.getValue().isNegative() && attr.getValue().getActiveBits() <= 63)
+      return attr.getValue().getZExtValue();
 
   Block *cond = &op.getCond().front();
   Block *body = &op.getBody().front();
@@ -3842,10 +3892,6 @@ static std::optional<int64_t> staticTripCountBound(stablehlo::WhileOp op) {
     if (!arg || arg.getOwner() != cond)
       continue;
     unsigned i = arg.getArgNumber();
-    auto limit = splatConstantAsDouble(cmp.getRhs());
-    auto start = splatConstantAsDouble(op->getOperand(i));
-    if (!limit || !start)
-      continue;
     auto add = bodyTerm->getOperand(i).getDefiningOp<stablehlo::AddOp>();
     if (!add)
       continue;
@@ -3853,25 +3899,15 @@ static std::optional<int64_t> staticTripCountBound(stablehlo::WhileOp op) {
       auto ba = dyn_cast<BlockArgument>(x);
       return ba && ba.getOwner() == body && ba.getArgNumber() == i;
     };
-    std::optional<double> step;
+    Value step;
     if (isArg(add.getLhs()))
-      step = splatConstantAsDouble(add.getRhs());
+      step = add.getRhs();
     else if (isArg(add.getRhs()))
-      step = splatConstantAsDouble(add.getLhs());
-    if (!step || *step <= 0)
-      continue;
-    double span = *limit - *start;
-    int64_t n = 0;
-    if (span > 0 || (inclusive && span == 0))
-      n = inclusive ? (int64_t)std::floor(span / *step) + 1
-                    : (int64_t)std::ceil(span / *step);
-    // A floating-point counter accumulates rounding error; one spare slot
-    // keeps the tape write in bounds if that error buys an extra iteration.
-    if (isa<FloatType>(
-            cast<RankedTensorType>(arg.getType()).getElementType()))
-      n += 1;
-    if (!best || n < *best)
-      best = n;
+      step = add.getLhs();
+    if (step)
+      if (auto n = boundedSteps(cmp, op->getOperand(i), step, inclusive))
+        if (!best || *n < *best)
+          best = *n;
   }
   return best;
 }

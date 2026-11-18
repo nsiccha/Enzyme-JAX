@@ -1,59 +1,11 @@
-diff --git a/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc b/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
---- a/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
-+++ b/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
-@@ -1098,6 +1098,13 @@
-                      Match(rhs->to_apply()->root_instruction(),
-                            m::Add(m::Parameter(), m::Parameter()));
-   if (rhs_scatter && lhs_scatter) {
-+    const auto preserves_scatter_region = [](const HloInstruction* scatter) {
-+      const auto& attrs = scatter->frontend_attributes().map();
-+      auto preserve = attrs.find("xla_preserve_scatter");
-+      return preserve != attrs.end() && preserve->second == "true";
-+    };
-+    const bool preserve_regions = preserves_scatter_region(lhs) ||
-+                                  preserves_scatter_region(rhs);
-     const auto& lhs_dnums = lhs->scatter_dimension_numbers();
-     const auto& rhs_dnums = rhs->scatter_dimension_numbers();
-     std::optional<int64_t> index_concat_dimension;
-@@ -1170,9 +1177,6 @@
-         ShapeUtil::ElementsIn(rhs_scatter_update->shape()) +
-             ShapeUtil::ElementsIn(lhs_scatter_update->shape()) <
-         ShapeUtil::ElementsIn(lhs->shape());
--    if (!update_concat_is_cheap) {
--      return absl::OkStatus();
--    }
-     const bool same_dimension_numbers =
-         lhs_dnums.index_vector_dim() == rhs_dnums.index_vector_dim() &&
-         absl::c_equal(lhs_dnums.scatter_dims_to_operand_dims(),
-@@ -1185,6 +1189,13 @@
-                       rhs_dnums.scatter_indices_batching_dims()) &&
-         absl::c_equal(lhs_dnums.input_batching_dims(),
-                       rhs_dnums.input_batching_dims());
-+    // Only concatenation allocates combined index and update arrays. When
-+    // dimension numbers differ, the fallback chains the existing scatters and
-+    // should not be gated on the cost of a concatenation it cannot perform.
-+    if (!preserve_regions && same_dimension_numbers &&
-+        !update_concat_is_cheap) {
-+      return absl::OkStatus();
-+    }
-     const bool index_concat_is_safe =
-         !lhs->unique_indices() && !rhs->unique_indices() &&
-         !DynCast<HloScatterInstruction>(lhs)->indices_are_sorted() &&
-@@ -1201,7 +1212,9 @@
-         },
-         rhs_scatter_update->shape());
-     // Concatenate the indices and updates
--    if (index_concat_is_safe && same_dimension_numbers &&
-+    // Keep each explicitly retained update region. Chaining preserves both
-+    // bodies; concatenation would merge them according to the data sizes.
-+    if (!preserve_regions && index_concat_is_safe && same_dimension_numbers &&
-         index_concat_dimension &&
-         lhs_scatter_index->shape().element_type() ==
-             rhs_scatter_index->shape().element_type() &&
 diff --git a/xla/hlo/transforms/simplifiers/BUILD b/xla/hlo/transforms/simplifiers/BUILD
+index cd7304f..1598646 100644
 --- a/xla/hlo/transforms/simplifiers/BUILD
 +++ b/xla/hlo/transforms/simplifiers/BUILD
-@@ -2010,3 +2010,19 @@
+@@ -2069,6 +2069,22 @@ xla_cc_test(
+     ],
+ )
+ 
 +xla_cc_test(
 +    name = "scatter_add_cost_test",
 +    srcs = ["scatter_add_cost_test.cc"],
@@ -73,8 +25,62 @@ diff --git a/xla/hlo/transforms/simplifiers/BUILD b/xla/hlo/transforms/simplifie
  cc_library(
      name = "tree_reduction_rewriter",
      srcs = ["tree_reduction_rewriter.cc"],
+diff --git a/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc b/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
+index 72f71d3..5458273 100644
+--- a/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
++++ b/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc
+@@ -1115,6 +1115,13 @@ absl::Status AlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
+                      Match(rhs->to_apply()->root_instruction(),
+                            m::AddAnyOrder(m::Parameter(0), m::Parameter(1)));
+   if (rhs_scatter && lhs_scatter) {
++    const auto preserves_scatter_region = [](const HloInstruction* scatter) {
++      const auto& attrs = scatter->frontend_attributes().map();
++      auto preserve = attrs.find("xla_preserve_scatter");
++      return preserve != attrs.end() && preserve->second == "true";
++    };
++    const bool preserve_regions = preserves_scatter_region(lhs) ||
++                                  preserves_scatter_region(rhs);
+     const auto& lhs_dnums = lhs->scatter_dimension_numbers();
+     const auto& rhs_dnums = rhs->scatter_dimension_numbers();
+     std::optional<int64_t> index_concat_dimension;
+@@ -1187,9 +1194,6 @@ absl::Status AlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
+         ShapeUtil::ElementsIn(rhs_scatter_update->shape()) +
+             ShapeUtil::ElementsIn(lhs_scatter_update->shape()) <
+         ShapeUtil::ElementsIn(lhs->shape());
+-    if (!update_concat_is_cheap) {
+-      return absl::OkStatus();
+-    }
+     const bool same_dimension_numbers =
+         lhs_dnums.index_vector_dim() == rhs_dnums.index_vector_dim() &&
+         absl::c_equal(lhs_dnums.scatter_dims_to_operand_dims(),
+@@ -1202,6 +1206,13 @@ absl::Status AlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
+                       rhs_dnums.scatter_indices_batching_dims()) &&
+         absl::c_equal(lhs_dnums.input_batching_dims(),
+                       rhs_dnums.input_batching_dims());
++    // Only concatenation allocates combined index and update arrays. When
++    // dimension numbers differ, the fallback chains the existing scatters and
++    // should not be gated on the cost of a concatenation it cannot perform.
++    if (!preserve_regions && same_dimension_numbers &&
++        !update_concat_is_cheap) {
++      return absl::OkStatus();
++    }
+     const bool index_concat_is_safe =
+         !lhs->unique_indices() && !rhs->unique_indices() &&
+         !DynCast<HloScatterInstruction>(lhs)->indices_are_sorted() &&
+@@ -1218,7 +1229,9 @@ absl::Status AlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
+         },
+         rhs_scatter_update->shape());
+     // Concatenate the indices and updates
+-    if (index_concat_is_safe && same_dimension_numbers &&
++    // Keep each explicitly retained update region. Chaining preserves both
++    // bodies; concatenation would merge them according to the data sizes.
++    if (!preserve_regions && index_concat_is_safe && same_dimension_numbers &&
+         index_concat_dimension &&
+         lhs_scatter_index->shape().element_type() ==
+             rhs_scatter_index->shape().element_type() &&
 diff --git a/xla/hlo/transforms/simplifiers/scatter_add_cost_test.cc b/xla/hlo/transforms/simplifiers/scatter_add_cost_test.cc
 new file mode 100644
+index 0000000..bbeba82
 --- /dev/null
 +++ b/xla/hlo/transforms/simplifiers/scatter_add_cost_test.cc
 @@ -0,0 +1,98 @@
