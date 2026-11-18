@@ -1,0 +1,938 @@
+{
+  "schema": 1,
+  "line": {
+    "repo": "nsiccha/Enzyme-JAX",
+    "ref": "dogfood",
+    "sha": "6143e7305d84cffd815dba3b11a696ba3a4998fd"
+  },
+  "upstream": {
+    "repo": "EnzymeAD/Enzyme-JAX",
+    "ref": "main",
+    "sha": "b6e9369f2f5d8361499dd77a80e869b28a58b16f"
+  },
+  "prepared_at": "2026-11-18T12:05:38Z",
+  "problems": [
+    {
+      "id": "triangular-solve-ad",
+      "role": "fix",
+      "title": "Differentiate triangular solves with batched and complex operands",
+      "summary": "The retained C++ forward and reverse rules handle side, triangle, unit diagonal and transpose. Upstream now has a separate rule, including its later complex ADJOINT correction.",
+      "repairs": [],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3275",
+          "relation": "related"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3278",
+          "relation": "related"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/2436",
+          "relation": "superseded-by"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/3947",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3948",
+          "relation": "fixes"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "c7f674b4ee9bf06a1d4bc09acf405d48d438edde",
+            "title": "StableHLO derivatives: triangular_solve (forward and reverse)",
+            "original": [
+              "c7f674b4ee9bf06a1d4bc09acf405d48d438edde"
+            ]
+          }
+        ],
+        "why_together": "The original commit contains the rule, shared matrix helpers and IR checks. On the refreshed dialect, the test uses the property spelling from 2efdc893, shared with the complex-product fixture."
+      },
+      "depends_on": [],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    },
+    {
+      "id": "cholesky-ad",
+      "role": "fix",
+      "title": "Differentiate a lower or upper Cholesky factor",
+      "summary": "Differentiating a positive-definite matrix factorization needs an adjoint for the chosen triangle. The rebased C++ rule includes the shared helpers and matches the rule selected in the stack.",
+      "repairs": [],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/2446",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Reactant.jl/issues/2751",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3276",
+          "relation": "related"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3278",
+          "relation": "related"
+        }
+      ],
+      "fix": {
+        "branch": "stablehlo-cholesky-derivatives",
+        "commits": [
+          {
+            "sha": "354e1da3e149a99b40d482084650aa8945c7aaaf",
+            "title": "StableHLO derivatives: cholesky (forward and reverse)",
+            "original": [
+              "c59a52dbd9c7fbc69941a834565be721ffad3527"
+            ]
+          }
+        ],
+        "why_together": "The rebased commit in #3276 includes the helper header and checks, so it stands alone on 99a79c8f. Its original c59a52db used the header introduced in c7f674b4."
+      },
+      "depends_on": [],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "99a79c8ff37f8026d116169c2ee0d95f8f48ab15",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/cholesky.mlir",
+            "full Enzyme-JAX lit suite",
+            "XLA finite differences and reverse/forward agreement"
+          ],
+          "result": "passed",
+          "detail": "1,720 lit tests passed on the rebased topic; worst forward relative error 5.0e-10.",
+          "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3276"
+        },
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    },
+    {
+      "id": "square-lu-ad",
+      "role": "fix",
+      "title": "Missing adjoint for packed square LU factors",
+      "summary": "Forward or reverse differentiation of a nonsingular square LU factorization stops at enzymexla.linalg.lu. The integer pivot and permutation results have no derivative.",
+      "repairs": [],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/3296",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3279",
+          "relation": "related"
+        }
+      ],
+      "fix": {
+        "branch": "enzymexla-linalg-lu-derivatives",
+        "commits": [
+          {
+            "sha": "a3e464c98d4b0f777e5309cc0b1aa0a803fe2191",
+            "title": "EnzymeXLA derivatives: linalg.lu (forward and reverse)",
+            "original": [
+              "74d67bb00b9b43a33c0c51a372254cc1e1364464"
+            ]
+          }
+        ],
+        "why_together": "The rebased LU commit supplies the rules and regression. Apply after the rebased Cholesky commit for the shared linear algebra helpers."
+      },
+      "depends_on": [
+        "cholesky-ad"
+      ],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "99a79c8ff37f8026d116169c2ee0d95f8f48ab15",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/lu.mlir",
+            "full Enzyme-JAX lit suite",
+            "XLA finite differences and reverse/forward agreement"
+          ],
+          "result": "passed",
+          "detail": "With the rebased Cholesky and LU commits, 1,721 lit tests passed. Worst forward relative error 5.0e-10.",
+          "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3279"
+        },
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    },
+    {
+      "id": "thin-svd-ad",
+      "role": "fix",
+      "title": "Missing derivatives of a thin singular value decomposition",
+      "summary": "Differentiate the values and vectors returned by enzymexla.linalg.svd for full=false. The rules assume phase-independent objectives. Upstream #2551 proposes reverse differentiation; #3277 contained the fork implementation.",
+      "repairs": [
+        {
+          "id": "enzymexla-linalg-svd-derivatives",
+          "covers": [
+            "implementation",
+            "regression"
+          ]
+        }
+      ],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/2551",
+          "relation": "related"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3277",
+          "relation": "related"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "6759ed4ca4606b96be71a976f10d3e0a139c4779",
+            "title": "EnzymeXLA derivatives: linalg.svd (forward and reverse)",
+            "original": [
+              "6759ed4ca4606b96be71a976f10d3e0a139c4779"
+            ]
+          }
+        ],
+        "why_together": "Adds forward and reverse rules and IR tests. Its original source uses the shared linear algebra helpers and include from the triangular solve, Cholesky and LU sequence."
+      },
+      "depends_on": [
+        "triangular-solve-ad",
+        "cholesky-ad",
+        "square-lu-ad"
+      ],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "06a4d999b73fb965053b072bbe15009dd7907923",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/svd.mlir",
+            "phase-independent finite differences on XLA"
+          ],
+          "result": "passed",
+          "detail": "Worst reported relative error 5.1e-9. The complex CPU runs used QRIteration.",
+          "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3277"
+        },
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ],
+      "draft": {
+        "title": "Missing derivatives of a thin singular value decomposition",
+        "prepared_at": "2026-11-18T12:05:38Z",
+        "body": "## Reproducer\n\nRun this example\n\n```sh\ncat > thin-svd.mlir <<'MLIR'\nfunc.func @vals(%a: tensor<4x3xf32>) -> tensor<3xf32> {\n  %r:4 = enzymexla.linalg.svd %a : (tensor<4x3xf32>) -> (tensor<4x3xf32>, tensor<3xf32>, tensor<3x3xf32>, tensor<i32>)\n  return %r#1 : tensor<3xf32>\n}\nMLIR\nenzymexlamlir-opt thin-svd.mlir --enzyme-wrap='infn=vals outfn= retTys=enzyme_active argTys=enzyme_active mode=ReverseModeCombined'\n```\n\n## Observed\n\nThe upstream base used by the stack has no adjoint for the SVD operation.\n\n## Expected\n\nFor distinct, nonzero singular values and output cotangent g, the real input adjoint should be U diag(g) Vᵀ.\n\n## Proposed fix\n\nDefine forward and reverse rules for the thin SVD, reusing the primal factors and handling rectangular shapes. Phase-dependent complex objectives need separate treatment. The upstream reverse proposal is [#2551](https://github.com/EnzymeAD/Enzyme-JAX/pull/2551); the fork rules were described in [#3277](https://github.com/EnzymeAD/Enzyme-JAX/pull/3277)."
+      }
+    },
+    {
+      "id": "float-conversion-rounding",
+      "role": "fix",
+      "title": "A nested floating-point conversion can lose its rounding step",
+      "summary": "A round trip from f64 through f32 and back must preserve the rounded value. The pin checks intermediate width. PR #3345 adds a stricter guard for precision, exponent range and supported formats.",
+      "repairs": [
+        {
+          "id": "convert-convert-float-exact",
+          "covers": [
+            "implementation",
+            "regression"
+          ]
+        }
+      ],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/3343",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3345",
+          "relation": "related"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "208b4fe856bb15bf1c7c3e511b52e746fb280964",
+            "title": "EnzymeHLOOpt: a conversion that rounds is not folded away",
+            "original": [
+              "208b4fe856bb15bf1c7c3e511b52e746fb280964"
+            ]
+          },
+          {
+            "sha": "a921925c47e247295b3937f6b6b45b678cd18dac",
+            "title": "convertconvert.mlir: a conversion that rounds is kept",
+            "original": [
+              "a921925c47e247295b3937f6b6b45b678cd18dac"
+            ]
+          }
+        ],
+        "why_together": "The implementation guards the fold; the second commit corrects the existing conversion fixture to require observable rounding."
+      },
+      "depends_on": [],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    },
+    {
+      "id": "complex-abs-ad",
+      "role": "fix",
+      "title": "Complex absolute value gives the wrong imaginary derivative",
+      "summary": "The original forward and reverse rules conjugated the wrong operand. At a purely imaginary nonzero input the sign of the imaginary contribution was reversed. Upstream fixed both modes in #3509.",
+      "repairs": [
+        {
+          "id": "complex-abs-derivatives",
+          "covers": [
+            "implementation",
+            "regression"
+          ]
+        }
+      ],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/3288",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3293",
+          "relation": "related"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3509",
+          "relation": "superseded-by"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "dcc4736b319e720e2acef1af34296bbab26e9585",
+            "title": "Fix the forward and reverse rules of a complex abs",
+            "original": [
+              "dcc4736b319e720e2acef1af34296bbab26e9585"
+            ]
+          }
+        ],
+        "why_together": "One commit adjusts both rules and their checks."
+      },
+      "depends_on": [],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    },
+    {
+      "id": "complex-product-ad",
+      "role": "fix",
+      "title": "Complex product reduction returns a conjugated gradient",
+      "summary": "The reverse of a complex product written as a reduction disagrees with the same product written as multiplications. Upstream repaired the adjoint conjugation in #3509.",
+      "repairs": [
+        {
+          "id": "complex-reduce-mul-derivative",
+          "covers": [
+            "implementation",
+            "regression"
+          ]
+        }
+      ],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/3288",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3294",
+          "relation": "related"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3509",
+          "relation": "superseded-by"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "250bc787fd5b8d737c44af1d078fd1d9594e3d05",
+            "title": "Conjugate the reverse rule of a complex product reduction",
+            "original": [
+              "250bc787fd5b8d737c44af1d078fd1d9594e3d05"
+            ]
+          }
+        ],
+        "why_together": "The reduction rule and complex-valued regression travel together. On the refreshed dialect, 2efdc893 updates the test syntax."
+      },
+      "depends_on": [],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    },
+    {
+      "id": "tall-lu-permutation",
+      "role": "fix",
+      "title": "CPU LU lowering gives a tall matrix a short permutation",
+      "summary": "For a 6×4 input, LAPACK produces four pivots, but the permutation needs six entries. Building both with the pivot type fails verification. Upstream #3656 repairs the permutation.",
+      "repairs": [
+        {
+          "id": "linalg-lu-tall-permutation",
+          "covers": [
+            "implementation",
+            "regression"
+          ]
+        }
+      ],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/3286",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3298",
+          "relation": "related"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3656",
+          "relation": "superseded-by"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "d2113ab9401c57b99402f87b06968514d2454343",
+            "title": "Lower getrf of a tall matrix on the CPU",
+            "original": [
+              "d2113ab9401c57b99402f87b06968514d2454343"
+            ]
+          }
+        ],
+        "why_together": "The CPU lowering and rectangular getrf fixture are in one commit."
+      },
+      "depends_on": [],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "f7bc2ce2b44293144c2040bc84d51f38eef98380",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "result": "passed",
+          "detail": "PR #3298 records 1,402 lit tests and 126 runtime checks in a combined CPU build with the derivative repairs. CUDA was outside that run.",
+          "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3298",
+          "julia": "1.10.11"
+        },
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    },
+    {
+      "id": "reduce-pad",
+      "role": "fix",
+      "title": "Reducing a padded tensor loses element counts and initial values",
+      "summary": "Folding a reduction through padding must account for the size of a padded slice and the reducer initial value. The fork also guards inexact exponents, promoted reducers and complex or Boolean factors. Upstream #3896 addresses the core count and fill cases.",
+      "repairs": [
+        {
+          "id": "fix/reduce-pad-multiplicity",
+          "covers": [
+            "implementation",
+            "regression"
+          ]
+        }
+      ],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/3331",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3332",
+          "relation": "related"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3896",
+          "relation": "fixes"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "85424fe049779342f847285eadfa98c2db73c503",
+            "title": "ReducePad: reduce the padding value over the whole slice",
+            "original": [
+              "85424fe049779342f847285eadfa98c2db73c503"
+            ]
+          },
+          {
+            "sha": "b137bad77a54e03698e42411b967efd3d328c905",
+            "title": "ReducePad: require an integer product exponent to fit",
+            "original": [
+              "b137bad77a54e03698e42411b967efd3d328c905"
+            ]
+          },
+          {
+            "sha": "0b8d635ea949c7ef321e6567ed4f0a7826dfacad",
+            "title": "ReducePad: keep rounded product exponents unreduced",
+            "original": [
+              "0b8d635ea949c7ef321e6567ed4f0a7826dfacad"
+            ]
+          },
+          {
+            "sha": "1817a28d16f484d8bc1b2f5b607ecf83b03064ad",
+            "title": "ReducePad: guard additive factors and preserve reducer types",
+            "original": [
+              "1817a28d16f484d8bc1b2f5b607ecf83b03064ad"
+            ]
+          },
+          {
+            "sha": "f21a998c26dfb31ab6fb4901504540e6a0810e3b",
+            "title": "ReducePad: check promoted reducer custom assembly",
+            "original": [
+              "f21a998c26dfb31ab6fb4901504540e6a0810e3b"
+            ]
+          }
+        ],
+        "why_together": "The initial rewrite and its four corrections cover counts, exponent representation, reducer types and the final FileCheck pattern."
+      },
+      "depends_on": [],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "9e5fb194b5ffcc94eb7c480a671f3a43cafa6ba7",
+          "tests": [
+            "test/lit_tests/reduce_pad_multiplicity.mlir",
+            "Enzyme-JAX lit suite"
+          ],
+          "result": "passed",
+          "detail": "The retained manifest records 1,417 lit tests, both focused RUN lines, 148 directive and 193 numeric mutation checks on the earlier accepted build.",
+          "evidence": "https://github.com/nsiccha/Reactant.jl/blob/24383df755ab7b1641048dfcb8d67e29fbef7097/contrib/dogfood/stack.json"
+        },
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    },
+    {
+      "id": "reshape-slice-rewrite-termination",
+      "role": "fix",
+      "title": "Reshape/slice compiler rewrites can loop indefinitely",
+      "summary": "When a reshape inserts a unit dimension before a dimension that cannot be removed, a failed rewrite leaves a constant behind. The greedy rewrite driver repeatedly retries it. The upstream change delays creating constants until all matching checks pass. The retained stack lists the local patch as superseded by that change.",
+      "repairs": [
+        {
+          "id": "reshape-slice-rewrite-termination",
+          "covers": [
+            "implementation",
+            "regression"
+          ]
+        }
+      ],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/3292",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3295",
+          "relation": "superseded-by"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "115eb71e5ae2d3d04c55776bd0d1cd1864e95fdf",
+            "title": "EnzymeHLOOpt: fix transformReshapeSlice backtracking index and add reshape slice/DUS tests (#3295)",
+            "original": [
+              "115eb71e5ae2d3d04c55776bd0d1cd1864e95fdf"
+            ]
+          }
+        ],
+        "why_together": "The pinned base already contains the upstream resolution. This upstream commit is reachable on the fork and carries the replacement used by the retained stack."
+      },
+      "depends_on": [],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    },
+    {
+      "id": "complex-zero-constant-folds",
+      "role": "fix",
+      "title": "Constant folding crashes on complex zeros",
+      "summary": "Complex-valued zero operands can crash dot-product simplification and no-NaN self-subtraction folding. The merged upstream change repairs complex constant creation and splat handling. The retained stack no longer needs its earlier local patch.",
+      "repairs": [
+        {
+          "id": "complex-zero-constant-folds",
+          "covers": [
+            "implementation",
+            "regression"
+          ]
+        }
+      ],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/3297",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3507",
+          "relation": "superseded-by"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3285",
+          "relation": "related"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "bc839345c27e80961cb0b4d782135ae381ee70ae",
+            "title": "Fix complex constant creation and splat attribute crashes (#3297) (#3507)",
+            "original": [
+              "bc839345c27e80961cb0b4d782135ae381ee70ae"
+            ]
+          }
+        ],
+        "why_together": "The pinned base already contains the upstream resolution. This upstream commit is reachable on the fork and carries the replacement used by the retained stack."
+      },
+      "depends_on": [],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    },
+    {
+      "id": "gesdd-complex-rwork",
+      "role": "fix",
+      "title": "Complex CPU SVD can fail compilation or produce invalid results",
+      "summary": "Incorrect LAPACK workspace arguments and allocation sizes can cause a pointer-type error, incorrect singular vectors, or a crash when lowering complex gesdd calls. Upstream merged #3446. The retained stack marks the local workspace repair as superseded; our alternative PR #3301 was closed without merging.",
+      "repairs": [
+        {
+          "id": "gesdd-complex-rwork",
+          "covers": [
+            "implementation",
+            "regression"
+          ]
+        }
+      ],
+      "upstream_refs": [
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/issues/3287",
+          "relation": "reports"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3446",
+          "relation": "superseded-by"
+        },
+        {
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3301",
+          "relation": "related"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "39e53ef7924d9191963e1602abe99f895edc7161",
+            "title": "Fix gesdd lowering for complex valued arrays (#3446)",
+            "original": [
+              "39e53ef7924d9191963e1602abe99f895edc7161"
+            ]
+          }
+        ],
+        "why_together": "The pinned base already contains the upstream resolution. This upstream commit is reachable on the fork and carries the replacement used by the retained stack."
+      },
+      "depends_on": [],
+      "requires": [
+        {
+          "name": "Enzyme stack pin",
+          "repo": "nsiccha/Enzyme",
+          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Reactant.jl stack pin",
+          "repo": "nsiccha/Reactant.jl",
+          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        },
+        {
+          "name": "Enzyme.jl stack pin",
+          "repo": "nsiccha/Enzyme.jl",
+          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
+          "why": "Revision selected together with this component for the October 13 compiler stack."
+        }
+      ],
+      "validation": [
+        {
+          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
+          "tests": [],
+          "result": "not-run",
+          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+        }
+      ]
+    }
+  ]
+}
