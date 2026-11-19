@@ -7,19 +7,18 @@ lit_expand_template(
     testonly = True,
     out = "lit.site.cfg.py",
     dirname_substitutions = {
+        "@ENZYMEXLA_BINARY_DIR@": "//:enzymexlamlir-opt",
         "@LLVM_TOOLS_BINARY_DIR@": "@llvm-project//llvm:FileCheck",
         "@LLVM_LIBS_DIR@": "@llvm-project//llvm:FileCheck",
         "@STABLEHLO_TOOLS_DIR@": "@stablehlo//:stablehlo-translate",
     },
     substitutions = select({
         "//src/enzyme_ad/jax:disable_triton_config": {
-            "@ENZYMEXLA_BINARY_DIR@": "",
             "@ENZYME_SOURCE_DIR@": "",
             "@ENZYME_BINARY_DIR@": "",
             "@ENABLE_TRITON@": "0",
         },
         "//conditions:default": {
-            "@ENZYMEXLA_BINARY_DIR@": "",
             "@ENZYME_SOURCE_DIR@": "",
             "@ENZYME_BINARY_DIR@": "",
             "@ENABLE_TRITON@": "1",
