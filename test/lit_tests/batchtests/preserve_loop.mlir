@@ -28,7 +28,14 @@ module {
 // PRIMAL-NOT: stablehlo.log
 // PRIMAL: return
 
-// REVERSE-LABEL: func.func private @diffebatched_guarded_log
+// REVERSE-LABEL: func.func private @batched_guarded_log_reverse_rule_primal
+// REVERSE: stablehlo.while
+// REVERSE-SAME: enzymexla.preserve_loop
+// REVERSE: stablehlo.if
+// REVERSE: stablehlo.log
+// REVERSE-NOT: stablehlo.while
+// REVERSE: return
+// REVERSE-LABEL: func.func private @batched_guarded_log_reverse_rule_reverse
 // REVERSE: stablehlo.while
 // REVERSE-SAME: enzymexla.preserve_loop
 // REVERSE: stablehlo.if
