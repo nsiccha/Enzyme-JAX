@@ -261,7 +261,14 @@ inline LogicalResult genericCreateBatch(Operation *src, OpBuilder &builder,
                       details::makeI64Constant(src->getLoc(), bodyBuilder, 1)));
 
     for (int d = 0; d < ndims; ++d) {
-      // auto idx = (i / batchStrides[d]) % batchSizes[d];
+      // A single batch dimension is indexed by the induction variable itself.
+      // Keeping that affine index also lets reverse-mode buffer updates reuse
+      // the value at each position.
+      if (ndims == 1) {
+        startIndices.push_back(whileBody->getArgument(0));
+        break;
+      }
+      // idx = (i / batchStrides[d]) % batchSizes[d];
       Value stride =
           details::makeI64Constant(src->getLoc(), bodyBuilder, batchStrides[d]);
       Value quotient = DivOp::create(bodyBuilder, src->getLoc(),
