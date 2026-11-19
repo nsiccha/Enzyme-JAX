@@ -12,14 +12,19 @@ module {
   }
 }
 
-// CHECK:  func.func @main(%arg0: tensor<10xf32>, %arg1: tensor<10xf32>) -> tensor<10xf32> {
-// CHECK-NEXT:    %0 = call @batched_f(%arg0) : (tensor<10xf32>) -> tensor<10xf32>
-// CHECK-NEXT:    %1 = call @diffebatched_f(%arg0, %arg1) : (tensor<10xf32>, tensor<10xf32>) -> tensor<10xf32>
-// CHECK-NEXT:    return %1 : tensor<10xf32>
-// CHECK-NEXT:  }
+// CHECK:   func.func @main(%arg0: tensor<10xf32>, %arg1: tensor<10xf32>) -> tensor<10xf32> {
+// CHECK-NEXT:     %0:2 = call @batched_f_reverse_rule_primal(%arg0) : (tensor<10xf32>) -> (tensor<10xf32>, tensor<10xf32>)
+// CHECK-NEXT:     %1 = call @batched_f_reverse_rule_reverse(%arg1, %0#1) : (tensor<10xf32>, tensor<10xf32>) -> tensor<10xf32>
+// CHECK-NEXT:     return %1 : tensor<10xf32>
+// CHECK-NEXT:   }
 
-// CHECK:  func.func private @diffebatched_f(%arg0: tensor<10xf32>, %arg1: tensor<10xf32>) -> tensor<10xf32> {
-// CHECK-NEXT:    %0 = stablehlo.multiply %arg1, %arg0 : tensor<10xf32>
-// CHECK-NEXT:    %1 = stablehlo.add %0, %0 : tensor<10xf32>
-// CHECK-NEXT:    return %1 : tensor<10xf32>
-// CHECK-NEXT:  }
+// CHECK:   func.func private @batched_f_reverse_rule_primal(%arg0: tensor<10xf32>) -> (tensor<10xf32>, tensor<10xf32>) {
+// CHECK-NEXT:     %0 = stablehlo.multiply %arg0, %arg0 : tensor<10xf32>
+// CHECK-NEXT:     return %0, %arg0 : tensor<10xf32>, tensor<10xf32>
+// CHECK-NEXT:   }
+
+// CHECK:   func.func private @batched_f_reverse_rule_reverse(%arg0: tensor<10xf32>, %arg1: tensor<10xf32>) -> tensor<10xf32> {
+// CHECK-NEXT:     %0 = stablehlo.multiply %arg0, %arg1 : tensor<10xf32>
+// CHECK-NEXT:     %1 = stablehlo.add %0, %0 : tensor<10xf32>
+// CHECK-NEXT:     return %1 : tensor<10xf32>
+// CHECK-NEXT:   }

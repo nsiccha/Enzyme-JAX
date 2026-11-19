@@ -29,12 +29,12 @@ module {
 // FORWARD-NEXT:    return %0#0, %0#1 : tensor<10xf32>, tensor<10xf32>
 // FORWARD-NEXT:  }
 
-// REVERSE:  func.func @main(%arg0: tensor<10xf32>, %arg1: tensor<i1>, %arg2: tensor<10xf32>) -> tensor<10xf32> {
-// REVERSE-NEXT:    %cst = arith.constant dense<0.000000e+00> : tensor<10xf32>
-// REVERSE-NEXT:    %0:2 = "stablehlo.if"(%arg1) ({
-// REVERSE-NEXT:      stablehlo.return %cst, %arg2 : tensor<10xf32>, tensor<10xf32>
-// REVERSE-NEXT:    }, {
-// REVERSE-NEXT:      stablehlo.return %cst, %cst : tensor<10xf32>, tensor<10xf32>
-// REVERSE-NEXT:    }) : (tensor<i1>) -> (tensor<10xf32>, tensor<10xf32>)
-// REVERSE-NEXT:    return %0#1 : tensor<10xf32>
-// REVERSE-NEXT:  }
+// REVERSE:   func.func @main(%arg0: tensor<10xf32>, %arg1: tensor<i1>, %arg2: tensor<10xf32>) -> tensor<10xf32> {
+// REVERSE-NEXT:     %cst = arith.constant dense<0.000000e+00> : tensor<10xf32>
+// REVERSE-NEXT:     %0 = "stablehlo.if"(%arg1) ({
+// REVERSE-NEXT:       stablehlo.return %arg2 : tensor<10xf32>
+// REVERSE-NEXT:     }, {
+// REVERSE-NEXT:       stablehlo.return %cst : tensor<10xf32>
+// REVERSE-NEXT:     }) : (tensor<i1>) -> tensor<10xf32>
+// REVERSE-NEXT:     return %0 : tensor<10xf32>
+// REVERSE-NEXT:   }

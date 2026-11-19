@@ -39,17 +39,17 @@ module {
 // FORWARD-NEXT:    }
 // FORWARD-NEXT:  }
 
-// REVERSE: func.func @main(%arg0: tensor<10xf32>, %arg1: tensor<i32>, %arg2: tensor<10xf32>) -> tensor<10xf32> {
-// REVERSE-NEXT:    %cst = arith.constant dense<0.000000e+00> : tensor<10xf32>
-// REVERSE-NEXT:    %0:3 = "stablehlo.case"(%arg1) ({
-// REVERSE-NEXT:      stablehlo.return %cst, %arg2, %cst : tensor<10xf32>, tensor<10xf32>, tensor<10xf32>
-// REVERSE-NEXT:    }, {
-// REVERSE-NEXT:      %1 = stablehlo.multiply %arg2, %arg0 : tensor<10xf32>
-// REVERSE-NEXT:      %2 = stablehlo.multiply %arg2, %arg0 : tensor<10xf32>
-// REVERSE-NEXT:      %3 = arith.addf %1, %2 fastmath<fast> : tensor<10xf32>
-// REVERSE-NEXT:      stablehlo.return %cst, %3, %cst : tensor<10xf32>, tensor<10xf32>, tensor<10xf32>
-// REVERSE-NEXT:    }, {
-// REVERSE-NEXT:      stablehlo.return %cst, %cst, %cst : tensor<10xf32>, tensor<10xf32>, tensor<10xf32>
-// REVERSE-NEXT:    }) : (tensor<i32>) -> (tensor<10xf32>, tensor<10xf32>, tensor<10xf32>)
-// REVERSE-NEXT:    return %0#1 : tensor<10xf32>
-// REVERSE-NEXT:  }
+// REVERSE:   func.func @main(%arg0: tensor<10xf32>, %arg1: tensor<i32>, %arg2: tensor<10xf32>) -> tensor<10xf32> {
+// REVERSE-NEXT:     %cst = arith.constant dense<0.000000e+00> : tensor<10xf32>
+// REVERSE-NEXT:     %0 = "stablehlo.case"(%arg1) ({
+// REVERSE-NEXT:       stablehlo.return %arg2 : tensor<10xf32>
+// REVERSE-NEXT:     }, {
+// REVERSE-NEXT:       %1 = stablehlo.multiply %arg2, %arg0 : tensor<10xf32>
+// REVERSE-NEXT:       %2 = stablehlo.multiply %arg2, %arg0 : tensor<10xf32>
+// REVERSE-NEXT:       %3 = arith.addf %1, %2 fastmath<fast> : tensor<10xf32>
+// REVERSE-NEXT:       stablehlo.return %3 : tensor<10xf32>
+// REVERSE-NEXT:     }, {
+// REVERSE-NEXT:       stablehlo.return %cst : tensor<10xf32>
+// REVERSE-NEXT:     }) : (tensor<i32>) -> tensor<10xf32>
+// REVERSE-NEXT:     return %0 : tensor<10xf32>
+// REVERSE-NEXT:   }
