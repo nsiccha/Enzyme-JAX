@@ -49,6 +49,8 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace mlir::stablehlo;
 
+static constexpr llvm::StringLiteral maxTripCountAttr = "enzymexla.max_trip_count";
+
 static int64_t to_i64(int64_t x) { return x; }
 static int64_t to_i64(llvm::APInt x) { return x.getSExtValue(); }
 
@@ -1825,6 +1827,9 @@ public:
       auto newnewWhile = WhileOp::create(revBuilder, orig->getLoc(),
                                          resultTypes, newWhile->getOperands());
       copyLoopRetention(newWhile, newnewWhile);
+      // Adding a counter preserves the primal loop's iteration bound.
+      if (auto bound = orig->getAttrOfType<IntegerAttr>(maxTripCountAttr))
+        newnewWhile->setAttr(maxTripCountAttr, bound);
       newnewWhile.getCond().takeBody(newWhile.getCond());
       newnewWhile.getBody().takeBody(newWhile.getBody());
 
@@ -3858,7 +3863,7 @@ static std::optional<unsigned> findIterationCounter(stablehlo::WhileOp op) {
 }
 
 static std::optional<int64_t> staticTripCountBound(stablehlo::WhileOp op) {
-  if (auto attr = op->getAttrOfType<IntegerAttr>("enzymexla.max_trip_count"))
+  if (auto attr = op->getAttrOfType<IntegerAttr>(maxTripCountAttr))
     if (!attr.getValue().isNegative() && attr.getValue().getActiveBits() <= 63)
       return attr.getValue().getZExtValue();
 
