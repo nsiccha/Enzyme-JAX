@@ -1435,7 +1435,6 @@ private:
 
     auto inputType = cast<RankedTensorType>(input.getType());
     auto pivotType = cast<RankedTensorType>(op.getResult(1).getType());
-    auto permutationType = cast<RankedTensorType>(op.getResult(2).getType());
     auto infoType = cast<RankedTensorType>(op.getResult(3).getType());
 
     auto inputElementType = inputType.getElementType();
@@ -1548,8 +1547,6 @@ private:
         unbatchedPivotType.getShape(), rewriter.getIntegerType(blasIntWidth));
     auto blasPivotType = RankedTensorType::get(
         pivotType.getShape(), rewriter.getIntegerType(blasIntWidth));
-    auto blasPermutationType = RankedTensorType::get(
-        permutationType.getShape(), rewriter.getIntegerType(blasIntWidth));
     auto unbatchedBLASInfoType = RankedTensorType::get(
         unbatchedInfoType.getShape(), rewriter.getIntegerType(blasIntWidth));
     auto blasInfoType = RankedTensorType::get(
