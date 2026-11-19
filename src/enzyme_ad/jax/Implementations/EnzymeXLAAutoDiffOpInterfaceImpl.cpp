@@ -1220,13 +1220,15 @@ static Value svdGapInverse(OpBuilder &builder, Location loc, Value s,
   Value rows = broadcastVector(builder, loc, s2, like, /*columns=*/false);
   Value diag = matrixIndexPredicate(builder, loc, cols,
                                     stablehlo::ComparisonDirection::EQ);
+  // Use 0/1 on the diagonal. Masking the reciprocal after dividing lets
+  // select simplification expose a zero divisor to higher derivatives.
+  Value one = splatLike(builder, loc, cols, 1.0);
+  Value zero = splatLike(builder, loc, cols, 0.0);
   Value gap = stablehlo::SelectOp::create(
-      builder, loc, diag, splatLike(builder, loc, cols, 1.0),
+      builder, loc, diag, one,
       stablehlo::SubtractOp::create(builder, loc, cols, rows));
-  Value inv = stablehlo::SelectOp::create(
-      builder, loc, diag, splatLike(builder, loc, cols, 0.0),
-      stablehlo::DivOp::create(builder, loc, splatLike(builder, loc, cols, 1.0),
-                               gap));
+  Value numerator = stablehlo::SelectOp::create(builder, loc, diag, zero, one);
+  Value inv = stablehlo::DivOp::create(builder, loc, numerator, gap);
   return inElementTypeOf(builder, loc, inv, like);
 }
 
