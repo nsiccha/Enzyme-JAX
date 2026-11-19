@@ -53,6 +53,8 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace mlir::stablehlo;
 
+static constexpr llvm::StringLiteral maxTripCountAttr = "enzymexla.max_trip_count";
+
 // Marks the enzyme.init of a cache that a replay starts from: the trip count,
 // initial carry and values read from above of a loop that is reversed by
 // replaying its body (cacheTripCheckpointed). The replay has to reproduce the
@@ -1900,6 +1902,9 @@ public:
 
     auto newnewWhile = WhileOp::create(builder, orig->getLoc(), resultTypes,
                                        newWhile->getOperands());
+    // Adding a counter preserves the primal loop's iteration bound.
+    if (auto bound = orig->getAttrOfType<IntegerAttr>(maxTripCountAttr))
+      newnewWhile->setAttr(maxTripCountAttr, bound);
     newnewWhile.getCond().takeBody(newWhile.getCond());
     newnewWhile.getBody().takeBody(newWhile.getBody());
 
@@ -5873,7 +5878,7 @@ static std::optional<unsigned> findIterationCounter(stablehlo::WhileOp op) {
 }
 
 static std::optional<int64_t> staticTripCountBound(stablehlo::WhileOp op) {
-  if (auto attr = op->getAttrOfType<IntegerAttr>("enzymexla.max_trip_count"))
+  if (auto attr = op->getAttrOfType<IntegerAttr>(maxTripCountAttr))
     if (!attr.getValue().isNegative() && attr.getValue().getActiveBits() <= 63)
       return attr.getValue().getZExtValue();
 
