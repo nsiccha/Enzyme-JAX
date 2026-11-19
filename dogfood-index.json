@@ -3,20 +3,20 @@
   "line": {
     "repo": "nsiccha/Enzyme-JAX",
     "ref": "dogfood",
-    "sha": "6143e7305d84cffd815dba3b11a696ba3a4998fd"
+    "sha": "b933d2ec9957c870ea152d16ec0cc48b208a9964"
   },
   "upstream": {
     "repo": "EnzymeAD/Enzyme-JAX",
     "ref": "main",
-    "sha": "b6e9369f2f5d8361499dd77a80e869b28a58b16f"
+    "sha": "7598c00c85e011ceae9f19b695ada92322870cca"
   },
-  "prepared_at": "2026-11-18T12:05:38Z",
+  "prepared_at": "2026-11-19T03:35:25+00:00",
   "problems": [
     {
       "id": "triangular-solve-ad",
       "role": "fix",
       "title": "Differentiate triangular solves with batched and complex operands",
-      "summary": "The retained C++ forward and reverse rules handle side, triangle, unit diagonal and transpose. Upstream now has a separate rule, including its later complex ADJOINT correction.",
+      "summary": "The upstream TableGen rules handle side, triangle, transpose and complex adjoints. The fork carries the leading tangent dimension through forward and reverse matrix products for multiple directions.",
       "repairs": [],
       "upstream_refs": [
         {
@@ -44,42 +44,92 @@
         "branch": "dogfood",
         "commits": [
           {
-            "sha": "c7f674b4ee9bf06a1d4bc09acf405d48d438edde",
-            "title": "StableHLO derivatives: triangular_solve (forward and reverse)",
+            "sha": "72b7d4c352298a3f79b598b64a1228e09d10a8d2",
+            "title": "add diff rules for `stablehlo.triangular_solve` (#2436)",
             "original": [
-              "c7f674b4ee9bf06a1d4bc09acf405d48d438edde"
+              "72b7d4c352298a3f79b598b64a1228e09d10a8d2"
+            ]
+          },
+          {
+            "sha": "6e01b02f80ffe241812e72d966c4f44e12d8268d",
+            "title": "Fix complex ADJOINT derivatives in stablehlo.triangular_solve (#3948)",
+            "original": [
+              "6e01b02f80ffe241812e72d966c4f44e12d8268d"
+            ]
+          },
+          {
+            "sha": "fb0e690c7fd4ebab856eb159f0bdba452ab30b39",
+            "title": "Include the derivative batch dimension in triangular-solve contractions",
+            "original": [
+              "fb0e690c7fd4ebab856eb159f0bdba452ab30b39"
+            ]
+          },
+          {
+            "sha": "4715f67d8fed51cdfc068cad818daa9f59f7ec5b",
+            "title": "Check the tested split-call, branch and triangular-solve gradients in generated IR",
+            "original": [
+              "4715f67d8fed51cdfc068cad818daa9f59f7ec5b"
             ]
           }
         ],
-        "why_together": "The original commit contains the rule, shared matrix helpers and IR checks. On the refreshed dialect, the test uses the property spelling from 2efdc893, shared with the complex-product fixture."
+        "why_together": "The width correction extends the upstream rules and keeps the scalar complex adjoint behavior."
       },
       "depends_on": [],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
         {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-adjoint.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-upper.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-adjoint.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-upper.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
+          ],
+          "native_build": "7530f3f52bc7768775fbef6286ad017fc5070505661ef617ef03427b1f661e6e",
+          "result": "passed",
+          "detail": "The width-two and four scalar complex triangular-solve fixtures passed on both CPU hosts. The interpreter rejected a deliberately incorrect expected tangent."
         }
       ]
     },
@@ -108,40 +158,62 @@
         }
       ],
       "fix": {
-        "branch": "stablehlo-cholesky-derivatives",
+        "branch": "dogfood",
         "commits": [
           {
-            "sha": "354e1da3e149a99b40d482084650aa8945c7aaaf",
+            "sha": "c7f674b4ee9bf06a1d4bc09acf405d48d438edde",
+            "title": "StableHLO derivatives: triangular_solve (forward and reverse)",
+            "original": [
+              "c7f674b4ee9bf06a1d4bc09acf405d48d438edde"
+            ]
+          },
+          {
+            "sha": "c59a52dbd9c7fbc69941a834565be721ffad3527",
             "title": "StableHLO derivatives: cholesky (forward and reverse)",
             "original": [
               "c59a52dbd9c7fbc69941a834565be721ffad3527"
             ]
+          },
+          {
+            "sha": "c734148147501132edf66dceebedc33e39cb0034",
+            "title": "Merge current upstream main into dogfood",
+            "original": [
+              "c734148147501132edf66dceebedc33e39cb0034"
+            ]
           }
         ],
-        "why_together": "The rebased commit in #3276 includes the helper header and checks, so it stands alone on 99a79c8f. Its original c59a52db used the header introduced in c7f674b4."
+        "why_together": "The Cholesky code shares the original linear algebra helpers with LU. Current upstream supplies triangular-solve differentiation."
       },
       "depends_on": [],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/cholesky.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/cholesky.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
         {
           "base": "99a79c8ff37f8026d116169c2ee0d95f8f48ab15",
           "tests": [
@@ -152,12 +224,6 @@
           "result": "passed",
           "detail": "1,720 lit tests passed on the rebased topic; worst forward relative error 5.0e-10.",
           "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3276"
-        },
-        {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
         }
       ]
     },
@@ -178,42 +244,55 @@
         }
       ],
       "fix": {
-        "branch": "enzymexla-linalg-lu-derivatives",
+        "branch": "dogfood",
         "commits": [
           {
-            "sha": "a3e464c98d4b0f777e5309cc0b1aa0a803fe2191",
+            "sha": "74d67bb00b9b43a33c0c51a372254cc1e1364464",
             "title": "EnzymeXLA derivatives: linalg.lu (forward and reverse)",
             "original": [
               "74d67bb00b9b43a33c0c51a372254cc1e1364464"
             ]
+          },
+          {
+            "sha": "c734148147501132edf66dceebedc33e39cb0034",
+            "title": "Merge current upstream main into dogfood",
+            "original": [
+              "c734148147501132edf66dceebedc33e39cb0034"
+            ]
           }
         ],
-        "why_together": "The rebased LU commit supplies the rules and regression. Apply after the rebased Cholesky commit for the shared linear algebra helpers."
+        "why_together": "The square LU forward and reverse rules are registered alongside the newer upstream EnzymeXLA interfaces."
       },
       "depends_on": [
         "cholesky-ad"
       ],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/lu.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/lu.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
         {
           "base": "99a79c8ff37f8026d116169c2ee0d95f8f48ab15",
           "tests": [
@@ -224,12 +303,6 @@
           "result": "passed",
           "detail": "With the rebased Cholesky and LU commits, 1,721 lit tests passed. Worst forward relative error 5.0e-10.",
           "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3279"
-        },
-        {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
         }
       ]
     },
@@ -266,6 +339,20 @@
             "original": [
               "6759ed4ca4606b96be71a976f10d3e0a139c4779"
             ]
+          },
+          {
+            "sha": "28f0953e69c143c3648e56623c7af0a84130b903",
+            "title": "Keep the SVD gap quotient differentiable on its masked diagonal",
+            "original": [
+              "28f0953e69c143c3648e56623c7af0a84130b903"
+            ]
+          },
+          {
+            "sha": "8c1490b4e1fa6957ee4767926e38861e4215fb00",
+            "title": "Check the masked numerator and safe denominator in both SVD rules",
+            "original": [
+              "8c1490b4e1fa6957ee4767926e38861e4215fb00"
+            ]
           }
         ],
         "why_together": "Adds forward and reverse rules and IR tests. Its original source uses the shared linear algebra helpers and include from the triangular solve, Cholesky and LU sequence."
@@ -277,25 +364,40 @@
       ],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/svd.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/svd.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/svd.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "The generated forward and reverse arithmetic agreed with sign-aligned finite differences at three distinct singular values. A masked diagonal produced NaN in the prior optimized reciprocal and zero after the correction. The laptop independently verified both cases."
+        },
         {
           "base": "06a4d999b73fb965053b072bbe15009dd7907923",
           "tests": [
@@ -305,12 +407,6 @@
           "result": "passed",
           "detail": "Worst reported relative error 5.1e-9. The complex CPU runs used QRIteration.",
           "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3277"
-        },
-        {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
         }
       ],
       "draft": {
@@ -347,49 +443,51 @@
         "branch": "dogfood",
         "commits": [
           {
-            "sha": "208b4fe856bb15bf1c7c3e511b52e746fb280964",
-            "title": "EnzymeHLOOpt: a conversion that rounds is not folded away",
+            "sha": "c3debdaa70580ea753b3fb3b2b564dac4176e86b",
+            "title": "ConvertConvertFloat: drop the intermediate conversion only when it is exact",
             "original": [
-              "208b4fe856bb15bf1c7c3e511b52e746fb280964"
+              "c3debdaa70580ea753b3fb3b2b564dac4176e86b"
             ]
           },
           {
-            "sha": "a921925c47e247295b3937f6b6b45b678cd18dac",
-            "title": "convertconvert.mlir: a conversion that rounds is kept",
+            "sha": "6d30b74cd4ff7beb9ca5015362e4ddd43ab4be23",
+            "title": "Carry exact intermediate-format guards for floating-point conversions",
             "original": [
-              "a921925c47e247295b3937f6b6b45b678cd18dac"
+              "6d30b74cd4ff7beb9ca5015362e4ddd43ab4be23"
             ]
           }
         ],
-        "why_together": "The implementation guards the fold; the second commit corrects the existing conversion fixture to require observable rounding."
+        "why_together": "The merged guard checks both precision and exponent range, with conservative handling of other floating formats."
       },
       "depends_on": [],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
         {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/convertconvert.mlir",
+            "test/lit_tests/convertconvert_float.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/convertconvert.mlir",
+            "test/lit_tests/convertconvert_float.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
         }
       ]
     },
@@ -425,42 +523,42 @@
         "branch": "dogfood",
         "commits": [
           {
-            "sha": "dcc4736b319e720e2acef1af34296bbab26e9585",
-            "title": "Fix the forward and reverse rules of a complex abs",
+            "sha": "bac01103036c88a1c18cd046ba92c7f4bab37a6a",
+            "title": "Fix complex abs and product reduction derivatives (#3288) (#3509)",
             "original": [
-              "dcc4736b319e720e2acef1af34296bbab26e9585"
+              "bac01103036c88a1c18cd046ba92c7f4bab37a6a"
             ]
           }
         ],
-        "why_together": "One commit adjusts both rules and their checks."
+        "why_together": "Upstream implements the complex conjugation rules on the current interfaces."
       },
       "depends_on": [],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
         {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/abs.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/abs.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
         }
       ]
     },
@@ -496,42 +594,44 @@
         "branch": "dogfood",
         "commits": [
           {
-            "sha": "250bc787fd5b8d737c44af1d078fd1d9594e3d05",
-            "title": "Conjugate the reverse rule of a complex product reduction",
+            "sha": "bac01103036c88a1c18cd046ba92c7f4bab37a6a",
+            "title": "Fix complex abs and product reduction derivatives (#3288) (#3509)",
             "original": [
-              "250bc787fd5b8d737c44af1d078fd1d9594e3d05"
+              "bac01103036c88a1c18cd046ba92c7f4bab37a6a"
             ]
           }
         ],
-        "why_together": "The reduction rule and complex-valued regression travel together. On the refreshed dialect, 2efdc893 updates the test syntax."
+        "why_together": "Upstream implements the complex conjugation rules on the current interfaces."
       },
       "depends_on": [],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
         {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/reduce_mul.mlir",
+            "test/lit_tests/diffrules/stablehlo/reduce_mul_complex.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/reduce_mul.mlir",
+            "test/lit_tests/diffrules/stablehlo/reduce_mul_complex.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
         }
       ]
     },
@@ -567,37 +667,68 @@
         "branch": "dogfood",
         "commits": [
           {
-            "sha": "d2113ab9401c57b99402f87b06968514d2454343",
-            "title": "Lower getrf of a tall matrix on the CPU",
+            "sha": "77bc08becfdcfcd8a8d1b2e047995bc94c066492",
+            "title": "fix the LU permutation (#3656)",
             "original": [
-              "d2113ab9401c57b99402f87b06968514d2454343"
+              "77bc08becfdcfcd8a8d1b2e047995bc94c066492"
+            ]
+          },
+          {
+            "sha": "f6ee18154b7f4ff6fdce856fc3c3e408b7f39dc0",
+            "title": "Use the upstream permutation types in CPU LU lowering",
+            "original": [
+              "f6ee18154b7f4ff6fdce856fc3c3e408b7f39dc0"
             ]
           }
         ],
-        "why_together": "The CPU lowering and rectangular getrf fixture are in one commit."
+        "why_together": "Upstream fixed the row count for the permutation. Removing two duplicated declarations kept the upstream implementation intact while retaining the fork regression for the 6 × 4 case."
       },
       "depends_on": [],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "result": "failed",
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "src/enzyme_ad/jax/Passes/LowerEnzymeXLALapack.cpp"
+          ],
+          "native_build": "4fd44a15084ccc9cbb2fed61b1b73d8d84d33b29",
+          "detail": "The integrated Reactant LLVM 24 build rejected the two duplicate permutation declarations."
+        },
+        {
+          "result": "passed",
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "f6ee18154b7f4ff6fdce856fc3c3e408b7f39dc0",
+          "detail": "The rebuilt optimizer passed the fixture for the CPU, CUDA, ROCm and TPU compiler lowerings. The CPU path emits six permutation entries for four pivots. These checks inspect generated code."
+        },
         {
           "base": "f7bc2ce2b44293144c2040bc84d51f38eef98380",
           "tests": [
@@ -607,12 +738,6 @@
           "detail": "PR #3298 records 1,402 lit tests and 126 runtime checks in a combined CPU build with the derivative repairs. CUDA was outside that run.",
           "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3298",
           "julia": "1.10.11"
-        },
-        {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
         }
       ]
     },
@@ -681,32 +806,52 @@
             "original": [
               "f21a998c26dfb31ab6fb4901504540e6a0810e3b"
             ]
+          },
+          {
+            "sha": "8c6d1e7590196a52ddc9c9a24df6a4e1008f7bce",
+            "title": "Fix ReducePad padding values and element counts (#3896)",
+            "original": [
+              "8c6d1e7590196a52ddc9c9a24df6a4e1008f7bce"
+            ]
+          },
+          {
+            "sha": "c734148147501132edf66dceebedc33e39cb0034",
+            "title": "Merge current upstream main into dogfood",
+            "original": [
+              "c734148147501132edf66dceebedc33e39cb0034"
+            ]
           }
         ],
-        "why_together": "The initial rewrite and its four corrections cover counts, exponent representation, reducer types and the final FileCheck pattern."
+        "why_together": "The integrated rewrite uses the data and padded extents, checks typed factors and counts, and retains the upstream regression for padding on non-reduced dimensions."
       },
       "depends_on": [],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/reducepad.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/reducepad.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
         {
           "base": "9e5fb194b5ffcc94eb7c480a671f3a43cafa6ba7",
           "tests": [
@@ -716,12 +861,6 @@
           "result": "passed",
           "detail": "The retained manifest records 1,417 lit tests, both focused RUN lines, 148 directive and 193 numeric mutation checks on the earlier accepted build.",
           "evidence": "https://github.com/nsiccha/Reactant.jl/blob/24383df755ab7b1641048dfcb8d67e29fbef7097/contrib/dogfood/stack.json"
-        },
-        {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
         }
       ]
     },
@@ -765,30 +904,32 @@
       "depends_on": [],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
         {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/reshapedus_unchanged.mlir",
+            "test/lit_tests/reshapedynamicslice.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/reshapedus_unchanged.mlir",
+            "test/lit_tests/reshapedynamicslice.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
         }
       ]
     },
@@ -836,30 +977,38 @@
       "depends_on": [],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
         {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/autobatching/loop_to_reduce.mlir",
+            "test/lit_tests/dotsimplify.mlir",
+            "test/lit_tests/exponential_minus_one_simplify.mlir",
+            "test/lit_tests/selfsubtract.mlir",
+            "test/lit_tests/while_pad_induction_reduction.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/autobatching/loop_to_reduce.mlir",
+            "test/lit_tests/dotsimplify.mlir",
+            "test/lit_tests/exponential_minus_one_simplify.mlir",
+            "test/lit_tests/selfsubtract.mlir",
+            "test/lit_tests/while_pad_induction_reduction.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
         }
       ]
     },
@@ -907,30 +1056,659 @@
       "depends_on": [],
       "requires": [
         {
-          "name": "Enzyme stack pin",
+          "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "97121ac5edc086a090bdefd104b79f66b805197a",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Reactant.jl stack pin",
-          "repo": "nsiccha/Reactant.jl",
-          "sha": "24383df755ab7b1641048dfcb8d67e29fbef7097",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
-        },
-        {
-          "name": "Enzyme.jl stack pin",
-          "repo": "nsiccha/Enzyme.jl",
-          "sha": "e02eb37420fcbd91508151b3a782b0c5b2853162",
-          "why": "Revision selected together with this component for the October 13 compiler stack."
+          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
       "validation": [
         {
-          "base": "b6e9369f2f5d8361499dd77a80e869b28a58b16f",
-          "tests": [],
-          "result": "not-run",
-          "detail": "No fresh compiler or runtime test on this pinned stack during the source audit."
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/linalg/lapack/gesdd_complex.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/linalg/lapack/gesdd_complex.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        }
+      ]
+    },
+    {
+      "id": "strided-dot-result-extents",
+      "role": "fix",
+      "title": "Strided slices through a dot product lose the last element",
+      "summary": "An exclusive limit that is between strides rounds up. The regression covers left, right and batch extents.",
+      "repairs": [],
+      "upstream_refs": [],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "501c98ab23d8af19909e2f4168ea553870329d7b",
+            "title": "Round strided dot slice extents up in the shared helper",
+            "original": [
+              "501c98ab23d8af19909e2f4168ea553870329d7b"
+            ]
+          }
+        ],
+        "why_together": "These changes implement the behavior described above and supply its regression coverage on dogfood."
+      },
+      "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/slicedotgeneral_strided_extents.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/slicedotgeneral_strided_extents.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        }
+      ],
+      "requires": [],
+      "depends_on": []
+    },
+    {
+      "id": "checkpoint-replay",
+      "role": "fix",
+      "title": "Checkpointed loops lose captures or expand before differentiation",
+      "summary": "Replay must remap captured values and preserve a checkpointed loop through unrolling, batching and conditional slicing.",
+      "repairs": [],
+      "upstream_refs": [
+        {
+          "relation": "related",
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3506"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "b4034f3b9e1440ea6271e3f7884014d462c933ba",
+            "title": "Fix SliceIf dominance when slicing one result of a multi-result if (#3506)",
+            "original": [
+              "b4034f3b9e1440ea6271e3f7884014d462c933ba"
+            ]
+          },
+          {
+            "sha": "1eed80b044eca7c06f352d629f14637c988307a3",
+            "title": "Preserve checkpoint replay and conditional slicing in reverse",
+            "original": [
+              "1eed80b044eca7c06f352d629f14637c988307a3"
+            ]
+          },
+          {
+            "sha": "417dcaffa89500efb654e86fe05a326e09da92ac",
+            "title": "Preserve checkpoint replay and its loop rewrite guards",
+            "original": [
+              "417dcaffa89500efb654e86fe05a326e09da92ac"
+            ]
+          },
+          {
+            "sha": "399f7cd5574466524eb375025b1bd905a948e2fe",
+            "title": "Lower tensor checkpoint progress before interpreting the replayed capture",
+            "original": [
+              "399f7cd5574466524eb375025b1bd905a948e2fe"
+            ]
+          },
+          {
+            "sha": "17184319c2f2bb0859e766e30339291930983d4a",
+            "title": "Drop analysis attributes on export to the StableHLO interpreter",
+            "original": [
+              "17184319c2f2bb0859e766e30339291930983d4a"
+            ]
+          },
+          {
+            "sha": "1fa0122e3794d1ad07b35c4f97325b8b1fa71996",
+            "title": "Check XLA retention metadata on exported conditionals and reductions",
+            "original": [
+              "1fa0122e3794d1ad07b35c4f97325b8b1fa71996"
+            ]
+          }
+        ],
+        "why_together": "These changes implement the behavior described above and supply its regression coverage on dogfood."
+      },
+      "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/checkpoint_requested_parallel.mlir",
+            "test/lit_tests/checkpoint_requested_unroll.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_checkpointing_replayed_capture.mlir",
+            "test/lit_tests/if.mlir",
+            "test/lit_tests/slice_if_result_dominance.mlir",
+            "test/lit_tests/while_repeated_induction_reduction.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/checkpoint_requested_parallel.mlir",
+            "test/lit_tests/checkpoint_requested_unroll.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_checkpointing_replayed_capture.mlir",
+            "test/lit_tests/if.mlir",
+            "test/lit_tests/slice_if_result_dominance.mlir",
+            "test/lit_tests/while_repeated_induction_reduction.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        }
+      ],
+      "requires": [],
+      "depends_on": []
+    },
+    {
+      "id": "nested-affine-indices",
+      "role": "fix",
+      "title": "Slicing an iota can access missing affine loop information",
+      "summary": "The loop analysis checks for affine information before using the slice indices.",
+      "repairs": [],
+      "upstream_refs": [
+        {
+          "relation": "superseded-by",
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3532"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "378e1319427b5d478b4c97b62e388bf7fe25e589",
+            "title": "WhileLoopInfo: Check for affine info before when slicing a iota (#3532)",
+            "original": [
+              "378e1319427b5d478b4c97b62e388bf7fe25e589"
+            ]
+          }
+        ],
+        "why_together": "These changes implement the behavior described above and supply its regression coverage on dogfood."
+      },
+      "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/while_affine_index_nested_loop.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/while_affine_index_nested_loop.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        }
+      ],
+      "requires": [],
+      "depends_on": []
+    },
+    {
+      "id": "retain-loop-structure",
+      "role": "fix",
+      "title": "Shape specialization expands explicitly retained loops",
+      "summary": "Frontend-marked loops preserve control flow, invariant work and lazy branches through optimization, batching, reverse differentiation and XLA export.",
+      "repairs": [],
+      "upstream_refs": [],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "3072f9b251a2c56e121b5e4ecf0bd77b74021b1d",
+            "title": "Retain shape-derived loop bodies through optimization and reverse AD",
+            "original": [
+              "3072f9b251a2c56e121b5e4ecf0bd77b74021b1d"
+            ]
+          },
+          {
+            "sha": "754a6f0347d3d5c92d2b418f2489eeb7f665d0ab",
+            "title": "Carry loop and lazy-branch retention through XLA export and simplification",
+            "original": [
+              "754a6f0347d3d5c92d2b418f2489eeb7f665d0ab"
+            ]
+          },
+          {
+            "sha": "a68f71f5cca1d3ea6b636bfcf35e97fa6b0b8d10",
+            "title": "Keep invariant work inside retained loop bodies",
+            "original": [
+              "a68f71f5cca1d3ea6b636bfcf35e97fa6b0b8d10"
+            ]
+          },
+          {
+            "sha": "dbc76433b5348a3d99a744f321263852145c70cb",
+            "title": "Prevent invariant work escaping retained MLIR loops",
+            "original": [
+              "dbc76433b5348a3d99a744f321263852145c70cb"
+            ]
+          },
+          {
+            "sha": "c0cd99155766ce80acd8e35fbefb0579668d077e",
+            "title": "Enable LICM for its optimizer positive control",
+            "original": [
+              "c0cd99155766ce80acd8e35fbefb0579668d077e"
+            ]
+          },
+          {
+            "sha": "a07683db67aee7f970c290320f2aa9242170f95c",
+            "title": "Retain guarded loops, reductions, scatter and gather ordering through XLA",
+            "original": [
+              "a07683db67aee7f970c290320f2aa9242170f95c"
+            ]
+          },
+          {
+            "sha": "5c34aa9d5ca95163e732cfe9728e68f49bd22a8e",
+            "title": "Use operation properties in the retained loop fixtures",
+            "original": [
+              "5c34aa9d5ca95163e732cfe9728e68f49bd22a8e"
+            ]
+          },
+          {
+            "sha": "8c10ac921d14ad7cc7ace6184ce3305179b63e8f",
+            "title": "Check retained batch loops and their per-lane slice indices",
+            "original": [
+              "8c10ac921d14ad7cc7ace6184ce3305179b63e8f"
+            ]
+          },
+          {
+            "sha": "8dbd67e5e13b85f21d42170af2e9bfad800fa082",
+            "title": "Check the guarded loops in both halves of the derived log rule",
+            "original": [
+              "8dbd67e5e13b85f21d42170af2e9bfad800fa082"
+            ]
+          },
+          {
+            "sha": "d5ef25c29044ab460938a5b4358dc9c97bbfdff8",
+            "title": "Use the induction variable directly for one-dimensional batch slices",
+            "original": [
+              "d5ef25c29044ab460938a5b4358dc9c97bbfdff8"
+            ]
+          },
+          {
+            "sha": "b933d2ec9957c870ea152d16ec0cc48b208a9964",
+            "title": "Check direct single-dimension indexing for batched padding",
+            "original": [
+              "b933d2ec9957c870ea152d16ec0cc48b208a9964"
+            ]
+          }
+        ],
+        "why_together": "These changes implement the behavior described above and supply its regression coverage on dogfood."
+      },
+      "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/batchtests/preserve_loop.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_preserve_loop.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_singleton_tensor_cache.mlir",
+            "test/lit_tests/preserve_control_flow_export.mlir",
+            "test/lit_tests/preserve_loop.mlir",
+            "test/lit_tests/preserve_loop_bounds.mlir",
+            "test/lit_tests/preserve_loop_licm.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/batchtests/preserve_loop.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_preserve_loop.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_singleton_tensor_cache.mlir",
+            "test/lit_tests/preserve_control_flow_export.mlir",
+            "test/lit_tests/preserve_loop.mlir",
+            "test/lit_tests/preserve_loop_bounds.mlir",
+            "test/lit_tests/preserve_loop_licm.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/batchtests/custom_call.mlir",
+            "test/lit_tests/batchtests/pad.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "The rank-one loop indexes both slices and the update with its induction variable. Four distinct padding values and all 76 output elements were executed. Six independent matrices checked the multidimensional indexing with the GPU solver call replaced by an identity."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/batchtests/preserve_loop.mlir"
+          ],
+          "native_build": "c81187861a4d737cd598ee3e174d66799c4b8bc10fe5bf148d4cbed2b3140bca",
+          "result": "passed",
+          "detail": "The laptop verified six guarded logarithm cotangents across positive, negative and zero inputs. The compiled split primal and reverse each retain their loop."
+        }
+      ],
+      "requires": [],
+      "depends_on": []
+    },
+    {
+      "id": "retain-reduction-scatter-gather",
+      "role": "fix",
+      "title": "Reduction, scatter and gather rewrites lose requested structure",
+      "summary": "XLA and StableHLO transformations honor the frontend attributes for retained reductions, scatter combination and gather ordering.",
+      "repairs": [],
+      "upstream_refs": [],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "66ac63cdfea44f29139cafe287e43eb4a9edc758",
+            "title": "Preserve reduction regions through XLA tree rewriting",
+            "original": [
+              "66ac63cdfea44f29139cafe287e43eb4a9edc758"
+            ]
+          },
+          {
+            "sha": "fbf272ed71e78530bb9ed381f2ba9348b31ba9ca",
+            "title": "Preserve marked reduction regions across YNN size thresholds",
+            "original": [
+              "fbf272ed71e78530bb9ed381f2ba9348b31ba9ca"
+            ]
+          },
+          {
+            "sha": "1888fb0d74de31d997c87a1edbdbfeddb166878f",
+            "title": "Gate only compatible scatter concatenation on update allocation cost",
+            "original": [
+              "1888fb0d74de31d997c87a1edbdbfeddb166878f"
+            ]
+          },
+          {
+            "sha": "3d88c6a73b6d0e3d0c1a16da365f64636599becc",
+            "title": "Preserve marked scatter regions across update-count growth",
+            "original": [
+              "3d88c6a73b6d0e3d0c1a16da365f64636599becc"
+            ]
+          },
+          {
+            "sha": "68e04f1f940024a39f7b37155cb833cc235f272f",
+            "title": "Honor frontend requirements for gather and elementwise ordering",
+            "original": [
+              "68e04f1f940024a39f7b37155cb833cc235f272f"
+            ]
+          },
+          {
+            "sha": "f7609eb50182485c8d6e485a42a6d013a43cb604",
+            "title": "Check early-exit trip bounds in the induction type and pin the unified Enzyme source",
+            "original": [
+              "f7609eb50182485c8d6e485a42a6d013a43cb604"
+            ]
+          },
+          {
+            "sha": "1fa0122e3794d1ad07b35c4f97325b8b1fa71996",
+            "title": "Check XLA retention metadata on exported conditionals and reductions",
+            "original": [
+              "1fa0122e3794d1ad07b35c4f97325b8b1fa71996"
+            ]
+          }
+        ],
+        "why_together": "These changes implement the behavior described above and supply its regression coverage on dogfood."
+      },
+      "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/preserve_gather_order.mlir",
+            "test/lit_tests/preserve_reduction_export.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/preserve_gather_order.mlir",
+            "test/lit_tests/preserve_reduction_export.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        }
+      ],
+      "requires": [],
+      "depends_on": [
+        "retain-loop-structure"
+      ]
+    },
+    {
+      "id": "early-exit-reverse-tape",
+      "role": "fix",
+      "title": "Bounded loops with a second exit need a reverse tape",
+      "summary": "The tape uses the actual iteration counter. Its capacity comes from a checked static bound or an explicit loop attribute.",
+      "repairs": [],
+      "upstream_refs": [],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "059ebad69fff5dabc067c23743ab52edd6297ef4",
+            "title": "StableHLO while remover: tape early-exit loops by their iteration counter",
+            "original": [
+              "059ebad69fff5dabc067c23743ab52edd6297ef4"
+            ]
+          },
+          {
+            "sha": "f7609eb50182485c8d6e485a42a6d013a43cb604",
+            "title": "Check early-exit trip bounds in the induction type and pin the unified Enzyme source",
+            "original": [
+              "f7609eb50182485c8d6e485a42a6d013a43cb604"
+            ]
+          },
+          {
+            "sha": "0dc9b436556602d58ae59d993b79912d3627f2b1",
+            "title": "Cover rounding at the floating induction precision limit",
+            "original": [
+              "0dc9b436556602d58ae59d993b79912d3627f2b1"
+            ]
+          },
+          {
+            "sha": "22d3efdbf5ff31c422a848a2d82144a49a68b9c3",
+            "title": "Keep the explicit iteration bound when reverse AD adds a counter",
+            "original": [
+              "22d3efdbf5ff31c422a848a2d82144a49a68b9c3"
+            ]
+          }
+        ],
+        "why_together": "These changes implement the behavior described above and supply its regression coverage on dogfood."
+      },
+      "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/while_early_exit_cache.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/while_early_exit_cache.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        }
+      ],
+      "requires": [],
+      "depends_on": []
+    },
+    {
+      "id": "branch-local-adjoints",
+      "role": "fix",
+      "title": "Branch-local adjoints inflate the state carried by reverse loops",
+      "summary": "The reverse branch initializes and consumes adjoints of values defined inside it. Current upstream supplies the result reset and nested conditional cleanup.",
+      "repairs": [],
+      "upstream_refs": [
+        {
+          "relation": "related",
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3241"
+        },
+        {
+          "relation": "related",
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3242"
+        }
+      ],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "7baf028aad27b921e551832c7bfb23fd15df803d",
+            "title": "StableHLO if/case reverse: zero the result adjoints they consume (#3241)",
+            "original": [
+              "7baf028aad27b921e551832c7bfb23fd15df803d"
+            ]
+          },
+          {
+            "sha": "a39f398ad6f5d4854d06bb9cdf695f0e90eea1d6",
+            "title": "Remove nested get/set checks in while op remover (#3242)",
+            "original": [
+              "a39f398ad6f5d4854d06bb9cdf695f0e90eea1d6"
+            ]
+          },
+          {
+            "sha": "422b5b75b523bbc27819ddf6d3953bdd2226bb17",
+            "title": "StableHLO if/case reverse: keep adjoints of branch values in the branch",
+            "original": [
+              "422b5b75b523bbc27819ddf6d3953bdd2226bb17"
+            ]
+          },
+          {
+            "sha": "6edf67dc4b5b023867d7c1cf2591b94ec544e62f",
+            "title": "Keep reverse adjoints in the selected branch",
+            "original": [
+              "6edf67dc4b5b023867d7c1cf2591b94ec544e62f"
+            ]
+          },
+          {
+            "sha": "4715f67d8fed51cdfc068cad818daa9f59f7ec5b",
+            "title": "Check the tested split-call, branch and triangular-solve gradients in generated IR",
+            "original": [
+              "4715f67d8fed51cdfc068cad818daa9f59f7ec5b"
+            ]
+          }
+        ],
+        "why_together": "These changes implement the behavior described above and supply its regression coverage on dogfood."
+      },
+      "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/case.mlir",
+            "test/lit_tests/diffrules/stablehlo/case_remove.mlir",
+            "test/lit_tests/diffrules/stablehlo/if.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_nested_if_adjoint.mlir",
+            "test/lit_tests/while_if_nested_removal.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/case.mlir",
+            "test/lit_tests/diffrules/stablehlo/case_remove.mlir",
+            "test/lit_tests/diffrules/stablehlo/if.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_nested_if_adjoint.mlir",
+            "test/lit_tests/while_if_nested_removal.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        }
+      ],
+      "requires": [],
+      "depends_on": []
+    },
+    {
+      "id": "bazel-lit-optimizer-location",
+      "role": "fix",
+      "title": "External Bazel lit tests cannot find the Enzyme-JAX optimizer",
+      "summary": "When Reactant runs an Enzyme-JAX fixture as an external Bazel target, lit searches the caller’s working directory for the optimizer. The test fails before it can check the generated MLIR.",
+      "upstream_refs": [],
+      "repairs": [],
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "d7da89f37bfe63b4b1429cac0165261275d42ccb",
+            "title": "Locate the lit optimizer through its Bazel target",
+            "original": [
+              "d7da89f37bfe63b4b1429cac0165261275d42ccb"
+            ]
+          }
+        ]
+      },
+      "depends_on": [],
+      "requires": [],
+      "validation": [
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "a7a3bcab0412fbfa1dc6d0074d891dcd7e0f5fa18183bb3e00e96474a1e4614c",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source b933d2ec9957c870ea152d16ec0cc48b208a9964. The run recorded each fixture separately."
+        },
+        {
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
+          "result": "passed",
+          "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "result": "passed",
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "d7da89f37bfe63b4b1429cac0165261275d42ccb",
+          "detail": "The external Bazel target reported PASSED using the optimizer location resolved from its declared runfiles target."
+        },
+        {
+          "result": "failed",
+          "base": "7598c00c85e011ceae9f19b695ada92322870cca",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "f6ee18154b7f4ff6fdce856fc3c3e408b7f39dc0",
+          "detail": "Bazel could not find enzymexlamlir-opt in the Reactant runfiles. The same binary and fixture passed all four compiler lowerings when invoked directly."
         }
       ]
     }
