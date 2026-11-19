@@ -16,7 +16,7 @@ module {
     return %r : tensor<f64>
   }
   func.func @main(%x: tensor<2xf64>) -> tensor<2xf64> {
-    %r = enzyme.batch @guarded_log(%x) {batch_shape = array<i64: 2>} : (tensor<2xf64>) -> tensor<2xf64>
+    %r = enzyme.batch @guarded_log(%x) <{batch_shape = array<i64: 2>}> : (tensor<2xf64>) -> tensor<2xf64>
     return %r : tensor<2xf64>
   }
 }

@@ -26,7 +26,7 @@ module {
   }
   func.func @main(%x: tensor<2xf64>) -> tensor<2xf64> {
     %seed = stablehlo.constant dense<1.0> : tensor<2xf64>
-    %dx = enzyme.autodiff @loop(%x, %seed) {activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]} : (tensor<2xf64>, tensor<2xf64>) -> tensor<2xf64>
+    %dx = enzyme.autodiff @loop(%x, %seed) <{activity = [#enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]}> : (tensor<2xf64>, tensor<2xf64>) -> tensor<2xf64>
     return %dx : tensor<2xf64>
   }
 }

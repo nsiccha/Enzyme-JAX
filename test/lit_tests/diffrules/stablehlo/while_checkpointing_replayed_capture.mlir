@@ -51,10 +51,10 @@ module {
     %seed = stablehlo.constant dense<1.0> : tensor<f64>
     %expected_value = stablehlo.constant dense<12.0> : tensor<f64>
     %expected_gradient = stablehlo.constant dense<96.0> : tensor<f64>
-    %result:2 = enzyme.autodiff @nested(%x, %n, %seed) {
+    %result:2 = enzyme.autodiff @nested(%x, %n, %seed) <{
       activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>],
       ret_activity = [#enzyme.activity<enzyme_active>]
-    } : (tensor<f64>, tensor<i64>, tensor<f64>) -> (tensor<f64>, tensor<f64>)
+    }> : (tensor<f64>, tensor<i64>, tensor<f64>) -> (tensor<f64>, tensor<f64>)
     check.expect_almost_eq %result#0, %expected_value : tensor<f64>
     check.expect_almost_eq %result#1, %expected_gradient : tensor<f64>
     return
