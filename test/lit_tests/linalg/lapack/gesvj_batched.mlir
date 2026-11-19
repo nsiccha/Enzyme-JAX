@@ -18,7 +18,7 @@ func.func @main(%arg0: tensor<4x3x64x64xf32>) -> (tensor<4x3x64x64xf32>, tensor<
 // TPU-NEXT:   %0:3 = stablehlo.custom_call @SVD(%arg0) : (tensor<4x3x64x64xf32>) -> (tensor<4x3x64x64xf32>, tensor<4x3x64xf32>, tensor<4x3x64x64xf32>)
 // TPU-NEXT:   %1 = stablehlo.transpose %0#2, dims = [0, 1, 3, 2] : (tensor<4x3x64x64xf32>) -> tensor<4x3x64x64xf32>
 // TPU-NEXT:   %2 = stablehlo.is_finite %0#0 : (tensor<4x3x64x64xf32>) -> tensor<4x3x64x64xi1>
-// TPU-NEXT:   %3 = stablehlo.reduce(%2 init: %c) applies stablehlo.and across dimensions = [2, 3] : (tensor<4x3x64x64xi1>, tensor<i1>) -> tensor<4x3xi1>
+// TPU-NEXT:   %3 = stablehlo.reduce(%2 init: %c) applies stablehlo.and across dimensions = [2, 3] {mhlo.frontend_attributes = {xla_preserve_reduction = "true"}} : (tensor<4x3x64x64xi1>, tensor<i1>) -> tensor<4x3xi1>
 // TPU-NEXT:   %4 = stablehlo.not %3 : tensor<4x3xi1>
 // TPU-NEXT:   %5 = stablehlo.convert %4 : (tensor<4x3xi1>) -> tensor<4x3xi64>
 // TPU-NEXT:   return %0#0, %0#1, %1, %5 : tensor<4x3x64x64xf32>, tensor<4x3x64xf32>, tensor<4x3x64x64xf32>, tensor<4x3xi64>

@@ -150,7 +150,7 @@ module @reactant_df attributes {mhlo.num_partitions = 1 : i64, mhlo.num_replicas
 // CHECK-NEXT:        %31 = stablehlo.minimum %28, %30 : tensor<i64>
 // CHECK-NEXT:        %32 = stablehlo.maximum %31, %c_9 : tensor<i64>
 // CHECK-NEXT:        stablehlo.return %32 : tensor<i64>
-// CHECK-NEXT:      }) : (tensor<i1>) -> tensor<i64>
+// CHECK-NEXT:      }) {mhlo.frontend_attributes = {xla_preserve_conditional = "true"}} : (tensor<i1>) -> tensor<i64>
 // CHECK-NEXT:      %14:2 = stablehlo.while(%iterArg_17 = %c_8, %iterArg_18 = %iterArg_13) : tensor<i64>, tensor<3xf32> attributes {enzyme.disable_mincut, enzymexla.checkpoint_segment}
 // CHECK-NEXT:      cond {
 // CHECK-NEXT:        %17 = stablehlo.compare LT, %iterArg_17, %13 : (tensor<i64>, tensor<i64>) -> tensor<i1>
@@ -226,7 +226,7 @@ module @reactant_df attributes {mhlo.num_partitions = 1 : i64, mhlo.num_replicas
 // CHECK-NEXT:          %56 = stablehlo.minimum %53, %55 : tensor<i64>
 // CHECK-NEXT:          %57 = stablehlo.maximum %56, %c_9 : tensor<i64>
 // CHECK-NEXT:          stablehlo.return %57 : tensor<i64>
-// CHECK-NEXT:        }) : (tensor<i1>) -> tensor<i64>
+// CHECK-NEXT:        }) {mhlo.frontend_attributes = {xla_preserve_conditional = "true"}} : (tensor<i1>) -> tensor<i64>
 // CHECK-NEXT:        %30 = stablehlo.reshape %iterArg_19 : (tensor<i64>) -> tensor<1xi64>
 // CHECK-NEXT:        %31 = stablehlo.dynamic_update_slice %iterArg_21, %30, %iterArg_18 : (tensor<3xi64>, tensor<1xi64>, tensor<i64>) -> tensor<3xi64>
 // CHECK-NEXT:        %32 = stablehlo.reshape %iterArg_20 : (tensor<3xf32>) -> tensor<1x3xf32>

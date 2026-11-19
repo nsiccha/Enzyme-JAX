@@ -6,7 +6,7 @@ func.func @fused_matmul_add(%alpha: tensor<f32>, %A: tensor<2x4xf32>, %B: tensor
 }
 
 // CHECK: func.func @fused_matmul_add(%arg0: tensor<f32>, %arg1: tensor<2x4xf32>, %arg2: tensor<4x3xf32>, %arg3: tensor<f32>, %arg4: tensor<2x3xf32>) -> tensor<2x3xf32> {
-// CHECK-NEXT:   %0 = stablehlo.dot_general %arg1, %arg2, contracting_dims = [1] x [0] : (tensor<2x4xf32>, tensor<4x3xf32>) -> tensor<2x3xf32>
+// CHECK-NEXT:   %0 = stablehlo.dot_general %arg1, %arg2, contracting_dims = [1] x [0] {mhlo.frontend_attributes = {xla_preserve_reduction = "true"}} : (tensor<2x4xf32>, tensor<4x3xf32>) -> tensor<2x3xf32>
 // CHECK-NEXT:   %1 = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f32>) -> tensor<2x3xf32>
 // CHECK-NEXT:   %2 = stablehlo.multiply %1, %0 : tensor<2x3xf32>
 // CHECK-NEXT:   %3 = stablehlo.broadcast_in_dim %arg3, dims = [] : (tensor<f32>) -> tensor<2x3xf32>
@@ -23,7 +23,7 @@ func.func @matmul(%alpha: tensor<f32>, %A: tensor<2x4xf32>, %B: tensor<4x3xf32>)
 }
 
 // CHECK: func.func @matmul(%arg0: tensor<f32>, %arg1: tensor<2x4xf32>, %arg2: tensor<4x3xf32>) -> tensor<2x3xf32> {
-// CHECK-NEXT:   %0 = stablehlo.dot_general %arg1, %arg2, contracting_dims = [1] x [0] : (tensor<2x4xf32>, tensor<4x3xf32>) -> tensor<2x3xf32>
+// CHECK-NEXT:   %0 = stablehlo.dot_general %arg1, %arg2, contracting_dims = [1] x [0] {mhlo.frontend_attributes = {xla_preserve_reduction = "true"}} : (tensor<2x4xf32>, tensor<4x3xf32>) -> tensor<2x3xf32>
 // CHECK-NEXT:   %1 = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f32>) -> tensor<2x3xf32>
 // CHECK-NEXT:   %2 = stablehlo.multiply %1, %0 : tensor<2x3xf32>
 // CHECK-NEXT:   return %2 : tensor<2x3xf32>
@@ -37,7 +37,7 @@ func.func @batch_matmul(%alpha: tensor<f32>, %A: tensor<8x10x2x4xf32>, %B: tenso
 }
 
 // CHECK: func.func @batch_matmul(%arg0: tensor<f32>, %arg1: tensor<8x10x2x4xf32>, %arg2: tensor<8x10x4x3xf32>) -> tensor<8x10x2x3xf32> {
-// CHECK-NEXT:   %0 = stablehlo.dot_general %arg1, %arg2, batching_dims = [0, 1] x [0, 1], contracting_dims = [3] x [2] : (tensor<8x10x2x4xf32>, tensor<8x10x4x3xf32>) -> tensor<8x10x2x3xf32>
+// CHECK-NEXT:   %0 = stablehlo.dot_general %arg1, %arg2, batching_dims = [0, 1] x [0, 1], contracting_dims = [3] x [2] {mhlo.frontend_attributes = {xla_preserve_reduction = "true"}} : (tensor<8x10x2x4xf32>, tensor<8x10x4x3xf32>) -> tensor<8x10x2x3xf32>
 // CHECK-NEXT:   %1 = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f32>) -> tensor<8x10x2x3xf32>
 // CHECK-NEXT:   %2 = stablehlo.multiply %1, %0 : tensor<8x10x2x3xf32>
 // CHECK-NEXT:   return %2 : tensor<8x10x2x3xf32>
@@ -52,7 +52,7 @@ func.func @matmul_transpose_transpose(%A: tensor<4x2xf32>, %B: tensor<3x4xf32>) 
 }
 
 // CHECK: func.func @matmul_transpose_transpose(%arg0: tensor<4x2xf32>, %arg1: tensor<3x4xf32>) -> tensor<2x3xf32> {
-// CHECK-NEXT:   %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [0] x [1] : (tensor<4x2xf32>, tensor<3x4xf32>) -> tensor<2x3xf32>
+// CHECK-NEXT:   %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [0] x [1] {mhlo.frontend_attributes = {xla_preserve_reduction = "true"}} : (tensor<4x2xf32>, tensor<3x4xf32>) -> tensor<2x3xf32>
 // CHECK-NEXT:   return %0 : tensor<2x3xf32>
 // CHECK-NEXT: }
 
@@ -65,7 +65,7 @@ func.func @matmul_transpose_none(%A: tensor<4x2xf32>, %B: tensor<4x3xf32>) -> te
 }
 
 // CHECK: func.func @matmul_transpose_none(%arg0: tensor<4x2xf32>, %arg1: tensor<4x3xf32>) -> tensor<2x3xf32> {
-// CHECK-NEXT:   %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [0] x [0] : (tensor<4x2xf32>, tensor<4x3xf32>) -> tensor<2x3xf32>
+// CHECK-NEXT:   %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [0] x [0] {mhlo.frontend_attributes = {xla_preserve_reduction = "true"}} : (tensor<4x2xf32>, tensor<4x3xf32>) -> tensor<2x3xf32>
 // CHECK-NEXT:   return %0 : tensor<2x3xf32>
 // CHECK-NEXT: }
 
@@ -78,7 +78,7 @@ func.func @matmul_none_transpose(%A: tensor<2x4xf32>, %B: tensor<3x4xf32>) -> te
 }
 
 // CHECK: func.func @matmul_none_transpose(%arg0: tensor<2x4xf32>, %arg1: tensor<3x4xf32>) -> tensor<2x3xf32> {
-// CHECK-NEXT:   %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [1] x [1] : (tensor<2x4xf32>, tensor<3x4xf32>) -> tensor<2x3xf32>
+// CHECK-NEXT:   %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [1] x [1] {mhlo.frontend_attributes = {xla_preserve_reduction = "true"}} : (tensor<2x4xf32>, tensor<3x4xf32>) -> tensor<2x3xf32>
 // CHECK-NEXT:   return %0 : tensor<2x3xf32>
 // CHECK-NEXT: }
 
@@ -94,7 +94,7 @@ func.func @matmul_adjoint_adjoint(%A: tensor<4x2xcomplex<f32>>, %B: tensor<3x4xc
 // CHECK-NEXT:   %cst = stablehlo.constant dense<(1.000000e+00,0.000000e+00)> : tensor<2x3xcomplex<f32>>
 // CHECK-NEXT:   %0 = chlo.conj %arg0 : tensor<4x2xcomplex<f32>> -> tensor<4x2xcomplex<f32>>
 // CHECK-NEXT:   %1 = chlo.conj %arg1 : tensor<3x4xcomplex<f32>> -> tensor<3x4xcomplex<f32>>
-// CHECK-NEXT:   %2 = stablehlo.dot_general %0, %1, contracting_dims = [0] x [1] : (tensor<4x2xcomplex<f32>>, tensor<3x4xcomplex<f32>>) -> tensor<2x3xcomplex<f32>>
+// CHECK-NEXT:   %2 = stablehlo.dot_general %0, %1, contracting_dims = [0] x [1] {mhlo.frontend_attributes = {xla_preserve_reduction = "true"}} : (tensor<4x2xcomplex<f32>>, tensor<3x4xcomplex<f32>>) -> tensor<2x3xcomplex<f32>>
 // CHECK-NEXT:   %3 = stablehlo.multiply %cst, %2 : tensor<2x3xcomplex<f32>>
 // CHECK-NEXT:   return %3 : tensor<2x3xcomplex<f32>>
 // CHECK-NEXT: }
