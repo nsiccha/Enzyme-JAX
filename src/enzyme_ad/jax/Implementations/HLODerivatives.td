@@ -1500,8 +1500,9 @@ def : HLODerivative<"FftOp",
 def TriangularSolveShadowDotDims : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
   auto type_A = cast<RankedTensorType>(op.getA().getType());
   auto type_b = cast<RankedTensorType>(op.getB().getType());
-  int64_t rank_A = type_A.getRank();
-  int64_t rank_b = type_b.getRank();
+  // A vector of derivative directions adds a leading batch dimension.
+  int64_t rank_A = type_A.getRank() + (gutils->width > 1);
+  int64_t rank_b = type_b.getRank() + (gutils->width > 1);
 
   SmallVector<int64_t> batch_dims_A;
   for (int i = 0; i < rank_A - 2; ++i) {
@@ -1525,7 +1526,7 @@ def TriangularSolveShadowDotDims : GlobalExpr</*needsprimal*/0, /*needsshadow*/0
 
 // Contracts the non-`A` dimension of `bar(b)` and `x` (columns if `left_side`, rows otherwise)
 def TriangularSolveDiffOuterDotDims : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
-  auto rank = cast<RankedTensorType>(op.getResult().getType()).getRank();
+  auto rank = cast<RankedTensorType>(op.getResult().getType()).getRank() + (gutils->width > 1);
 
   SmallVector<int64_t> batch_dims;
   for (int i = 0; i < rank - 2; ++i) {
@@ -1545,8 +1546,8 @@ def TriangularSolveDiffOuterDotDims : GlobalExpr</*needsprimal*/0, /*needsshadow
 
 def SelectIfLeftSide : StaticSelect<"cast<TriangularSolveOp>(op).getLeftSide() == true;">;
 
-def TriangularSolveGetResultType : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
-  op.getResult().getType();
+def TriangularSolveDiffAType : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
+  cast<AutoDiffTypeInterface>(op.getA().getType()).getShadowType(gutils->width);
 }]>;
 def TriangularSolveGetLeftSide : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{op.getLeftSide();}]>;
 def TriangularSolveGetLower : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{op.getLower();}]>;
@@ -1613,8 +1614,8 @@ def TriangularSolveZeroLikeA : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
 
 def TriangularSolveDiffOuterRaw : SubRoutine<(Op $A, $diffb, $x),
   (SelectIfTriangularSolveDiffFirst
-    (DotGeneral (TypeOf $A), $diffb, $x, (TriangularSolveDiffOuterDotDims), (TriangularSolveDotPrec), (DotAlgorithmAttr)),
-    (DotGeneral (TypeOf $A), $x, $diffb, (TriangularSolveDiffOuterDotDims), (TriangularSolveDotPrec), (DotAlgorithmAttr))
+    (DotGeneral (TriangularSolveDiffAType), $diffb, $x, (TriangularSolveDiffOuterDotDims), (TriangularSolveDotPrec), (DotAlgorithmAttr)),
+    (DotGeneral (TriangularSolveDiffAType), $x, $diffb, (TriangularSolveDiffOuterDotDims), (TriangularSolveDotPrec), (DotAlgorithmAttr))
   )>;
 
 def TriangularSolveDiffOuter : SubRoutine<(Op $A, $diffb, $x),
@@ -1632,11 +1633,11 @@ def TriangularSolveMaskedMatrix : SubRoutine<(Op $A),
 // op(tri(A)) b if `left_side`, b op(tri(A)) otherwise
 def TriangularSolveMaskedProduct : SubRoutine<(Op $A, $b),
   (SelectIfLeftSide
-    (DotGeneral (TypeOf $b),
+    (DotGeneral (DotGeneralBatchedResultType),
       (TriangularSolveMaskedMatrix $A),
       $b,
       (TriangularSolveShadowDotDims), (TriangularSolveDotPrec), (DotAlgorithmAttr)),
-    (DotGeneral (TypeOf $b),
+    (DotGeneral (DotGeneralBatchedResultType),
       $b,
       (TriangularSolveMaskedMatrix $A),
       (TriangularSolveShadowDotDims), (TriangularSolveDotPrec), (DotAlgorithmAttr))
