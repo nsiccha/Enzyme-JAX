@@ -51,13 +51,6 @@ LogicalResult unrollWhileOp(mlir::stablehlo::WhileOp op, RewriterBase &rewriter,
                             int64_t maxOperationThreshold,
                             SmallVectorImpl<Value> *replacements,
                             int64_t maxBoundedIterations, bool boundedGuardIf) {
-
-  // A checkpoint request must retain the primal loop before AD can build its
-  // bounded tape. After AD, unrolling a segment would undo that memory bound.
-  // Retained frontend loops also require control flow.
-  if (isOrContainsPreservedLoop(op))
-    return failure();
-
   WhileLoopInfo info(op);
   if (info.computeInfo().failed() || !info.isValid())
     return failure();
@@ -140,6 +133,12 @@ LogicalResult unrollWhileOp(mlir::stablehlo::WhileOp op, RewriterBase &rewriter,
          iters * ops > maxNumIterations * maxOperationThreshold))
       return failure();
   }
+
+  // A checkpoint request must retain the primal loop before AD can build its
+  // bounded tape. After AD, unrolling a segment would undo that memory bound.
+  // Retained frontend loops also require control flow.
+  if (isOrContainsPreservedLoop(op))
+    return failure();
 
   Block &condBlock = op.getCond().front();
   auto condTerm = cast<stablehlo::ReturnOp>(condBlock.getTerminator());
