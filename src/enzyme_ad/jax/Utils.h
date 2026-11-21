@@ -618,9 +618,15 @@ inline std::pair<APInt, APInt> getProvableIntegerRange(Value v, int depth = 0) {
   if (auto cvt = dyn_cast<stablehlo::ConvertOp>(def)) {
     auto inEty = dyn_cast<IntegerType>(
         cast<RankedTensorType>(cvt.getOperand().getType()).getElementType());
-    // Only a widening integer conversion preserves the operand's range.
-    if (inEty && inEty.getWidth() <= width)
-      return getProvableIntegerRange(cvt.getOperand(), depth + 1);
+    if (!inEty)
+      return typeRange();
+    // A boolean converts to 0 or 1, not to its signed i1 value -1.
+    if (inEty.getWidth() == 1)
+      return fit({APInt(128, 0), APInt(128, 1)});
+    // A widening integer conversion keeps the operand's values that the
+    // result type represents; a change of signedness may not.
+    if (inEty.getWidth() <= width)
+      return fit(getProvableIntegerRange(cvt.getOperand(), depth + 1));
     return typeRange();
   }
   if (auto clamp = dyn_cast<stablehlo::ClampOp>(def)) {
