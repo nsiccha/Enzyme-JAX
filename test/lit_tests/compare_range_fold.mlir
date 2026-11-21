@@ -82,3 +82,42 @@ func.func @may_wrap() -> tensor<64xi1> {
 // CHECK-NEXT: %2 = stablehlo.compare GE, %1, %c_0 : (tensor<64xi8>, tensor<64xi8>) -> tensor<64xi1>
 // CHECK-NEXT: return %2 : tensor<64xi1>
 // CHECK-NEXT: }
+
+// A converted boolean is 0 or 1 (StableHLO converts true to 1), so it may
+// equal 1 and the compare stays.
+func.func @bool_eq_one(%b: tensor<2xi1>) -> tensor<2xi1> {
+  %one = stablehlo.constant dense<1> : tensor<2xi64>
+  %i = stablehlo.convert %b : (tensor<2xi1>) -> tensor<2xi64>
+  %e = stablehlo.compare EQ, %i, %one, SIGNED : (tensor<2xi64>, tensor<2xi64>) -> tensor<2xi1>
+  return %e : tensor<2xi1>
+}
+
+// CHECK-LABEL: func.func @bool_eq_one
+// CHECK: stablehlo.compare EQ
+// CHECK-NOT: dense<false>
+
+// A converted boolean is never negative.
+func.func @bool_ge_zero(%b: tensor<2xi1>) -> tensor<2xi1> {
+  %zero = stablehlo.constant dense<0> : tensor<2xi64>
+  %i = stablehlo.convert %b : (tensor<2xi1>) -> tensor<2xi64>
+  %e = stablehlo.compare GE, %i, %zero, SIGNED : (tensor<2xi64>, tensor<2xi64>) -> tensor<2xi1>
+  return %e : tensor<2xi1>
+}
+
+// CHECK-LABEL: func.func @bool_ge_zero
+// CHECK-NEXT: %c = stablehlo.constant dense<true> : tensor<2xi1>
+// CHECK-NEXT: return %c : tensor<2xi1>
+// CHECK-NEXT: }
+
+// An unsigned 32-bit value at or above 2^31 converts to a negative i32, so
+// the compare stays.
+func.func @u32_to_i32_lt_zero(%u: tensor<2xui32>) -> tensor<2xi1> {
+  %zero = stablehlo.constant dense<0> : tensor<2xi32>
+  %i = stablehlo.convert %u : (tensor<2xui32>) -> tensor<2xi32>
+  %e = stablehlo.compare LT, %i, %zero, SIGNED : (tensor<2xi32>, tensor<2xi32>) -> tensor<2xi1>
+  return %e : tensor<2xi1>
+}
+
+// CHECK-LABEL: func.func @u32_to_i32_lt_zero
+// CHECK: stablehlo.compare LT
+// CHECK-NOT: dense<false>
