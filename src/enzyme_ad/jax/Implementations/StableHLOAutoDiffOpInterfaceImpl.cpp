@@ -1878,7 +1878,9 @@ private:
     if (!lhsType)
       return builder.getI64Type();
 
-    return lhsType.getElementType();
+    // A trip counter counts in integers, whatever the condition compares.
+    Type elementType = lhsType.getElementType();
+    return elementType.isInteger() ? elementType : builder.getI64Type();
   }
 };
 

@@ -72,6 +72,16 @@ LogicalResult WhileLoopInfo::computeInfo() {
     return failure();
   }
 
+  // Only an integer induction variable has a trip count a closed form can
+  // state. A floating-point one rounds in every increment: 0.1 added ten times
+  // is just below 1.0, so `s < 1.0; s += 0.1` runs 11 times, where
+  // (1.0 - 0) / 0.1 says 10. Everything below that counts (the constant
+  // bounds, the affine index map, getNumIters) is integer arithmetic.
+  auto inductTy = dyn_cast<RankedTensorType>(induct.getType());
+  if (!inductTy || !isa<IntegerType>(inductTy.getElementType())) {
+    return failure();
+  }
+
   start = op->getOperand(induct.getArgNumber());
   limit = cond.getOperand(1);
 
@@ -181,7 +191,7 @@ int64_t WhileLoopInfo::getConstantNumIters() {
   int64_t start = getConstantStart().value(),
           limit = getConstantLimit().value(), step = getConstantStep().value();
 
-  if (limit < start) // cmp is lt
+  if (limit <= start) // cmp is lt: the first test already fails
     return 0;
 
   if (step < 0 && limit > start)
@@ -207,16 +217,38 @@ Value WhileLoopInfo::getNumIters(mlir::OpBuilder &builder,
     return {};
   }
 
-  // numIters = (limit - start) / step;
-  Value stepVal = getStep(builder, mapping);
-  Value numIters = stablehlo::DivOp::create(
-      builder, op->getLoc(),
-      stablehlo::SubtractOp::create(builder, op->getLoc(),
-                                    mapping.lookupOrDefault(limit),
-                                    mapping.lookupOrDefault(start)),
-      stepVal);
+  // The loop runs while iv < limit, so it runs no iteration unless
+  // start < limit, and then ceil((limit - start) / step) of them, as
+  // getConstantNumIters counts. Integer division truncates, so the ceiling is
+  // the quotient plus one when the division leaves a remainder: (limit - start
+  // + step - 1) / step says the same but can overflow near the type's maximum.
+  // A step that is not positive while start < limit never ends the loop, so
+  // any count is as good there.
+  Location loc = op->getLoc();
+  Value startVal = mapping.lookupOrDefault(start);
+  Value limitVal = mapping.lookupOrDefault(limit);
+  auto countTy = cast<RankedTensorType>(startVal.getType());
+  Value zero = stablehlo::ConstantOp::create(
+      builder, loc, countTy, cast<ElementsAttr>(makeAttr(countTy, 0)));
 
-  return numIters;
+  Value numIters =
+      stablehlo::SubtractOp::create(builder, loc, limitVal, startVal);
+  if (!isStepOne()) {
+    Value stepVal = getStep(builder, mapping);
+    Value quotient = stablehlo::DivOp::create(builder, loc, numIters, stepVal);
+    Value remainder = stablehlo::RemOp::create(builder, loc, numIters, stepVal);
+    Value partial =
+        stablehlo::CompareOp::create(builder, loc, remainder, zero,
+                                     stablehlo::ComparisonDirection::NE);
+    numIters = stablehlo::AddOp::create(
+        builder, loc, quotient,
+        stablehlo::ConvertOp::create(builder, loc, partial,
+                                     countTy.getElementType()));
+  }
+
+  Value runs = stablehlo::CompareOp::create(
+      builder, loc, startVal, limitVal, stablehlo::ComparisonDirection::LT);
+  return stablehlo::SelectOp::create(builder, loc, runs, numIters, zero);
 }
 
 WhileLoopInfo::AffineIndexInfo
