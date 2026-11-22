@@ -1612,16 +1612,16 @@ def TriangularSolveZeroLikeA : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
   ConstantOp::create(builder, op.getLoc(), typeA, cast<ElementsAttr>(makeAttr(typeA, 0)));
 }]>;
 
-def TriangularSolveDiffOuterRaw : SubRoutine<(Op $A, $diffb, $x),
+def TriangularSolveDiffOuterRaw : SubRoutine<(Op $diffb, $x),
   (SelectIfTriangularSolveDiffFirst
     (DotGeneral (TriangularSolveDiffAType), $diffb, $x, (TriangularSolveDiffOuterDotDims), (TriangularSolveDotPrec), (DotAlgorithmAttr)),
     (DotGeneral (TriangularSolveDiffAType), $x, $diffb, (TriangularSolveDiffOuterDotDims), (TriangularSolveDotPrec), (DotAlgorithmAttr))
   )>;
 
-def TriangularSolveDiffOuter : SubRoutine<(Op $A, $diffb, $x),
+def TriangularSolveDiffOuter : SubRoutine<(Op $diffb, $x),
   (SelectIfTriangularSolveComplexAdjoint
-    (Conj (TriangularSolveDiffOuterRaw $A, $diffb, $x)),
-    (TriangularSolveDiffOuterRaw $A, $diffb, $x)
+    (Conj (TriangularSolveDiffOuterRaw $diffb, $x)),
+    (TriangularSolveDiffOuterRaw $diffb, $x)
   )>;
 
 def TriangularSolveMaskedMatrix : SubRoutine<(Op $A),
@@ -1647,7 +1647,7 @@ def : HLODerivative<"TriangularSolveOp", (Op $A, $b),
   [
     (Select
       (TriangularSolveTriangleMask),
-      (Neg (TriangularSolveDiffOuter $A, (TriangularSolveAdjointLike $A, (DiffeRet)), (TriangularSolveLike $A, $b))),
+      (Neg (TriangularSolveDiffOuter (TriangularSolveAdjointLike $A, (DiffeRet)), (TriangularSolveLike $A, $b))),
       (TriangularSolveZeroLikeA)),
     (TriangularSolveAdjointLike $A, (DiffeRet))
   ],
