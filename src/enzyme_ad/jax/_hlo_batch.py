@@ -65,6 +65,7 @@ def _batchable(op, functions):
             "enzyme.linalg.solve",
             "enzyme.linalg.logabsdet",
             "enzyme.linalg.det",
+            "enzyme.linalg.eigh",
             "enzyme.math.log_ndtr",
         ):
             return False
@@ -73,9 +74,10 @@ def _batchable(op, functions):
         if function is None or not pure_function(function, functions):
             return False
         # Check control flow inside the portable decomposition as well.
-        return ir.StringAttr(
-            op.attributes["name"]
-        ).value != "enzyme.linalg.logabsdet" or all(
+        return ir.StringAttr(op.attributes["name"]).value not in (
+            "enzyme.linalg.logabsdet",
+            "enzyme.linalg.eigh",
+        ) or all(
             _batchable(child.operation, functions)
             for child in function.entry_block.operations
         )

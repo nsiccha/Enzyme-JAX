@@ -236,7 +236,7 @@ def optimization_passes(
 
     func_passes = ",".join(
         [
-            "func.func(stablehlo-legalize-composite-to-call{except=enzyme.linalg.solve,enzyme.linalg.logabsdet,enzyme.linalg.det,enzyme.math.log_ndtr})",
+            "func.func(stablehlo-legalize-composite-to-call{except=enzyme.linalg.solve,enzyme.linalg.logabsdet,enzyme.linalg.det,enzyme.linalg.eigh,enzyme.math.log_ndtr})",
             "canonicalize",
             "cse",
             "canonicalize",
