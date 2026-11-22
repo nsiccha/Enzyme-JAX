@@ -81,6 +81,12 @@ py_test(
 )
 
 py_test(
+    name = "test_eigh_composite",
+    srcs = ["test_eigh_composite.py"],
+    deps = TEST_DEPS,
+)
+
+py_test(
     name = "test_hlo_barrier",
     srcs = ["test_hlo_barrier.py"],
     deps = TEST_DEPS,
