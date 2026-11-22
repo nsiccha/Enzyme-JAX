@@ -3840,10 +3840,13 @@ public:
 //   Abar = V (diag(wbar) + F o (V^T Vbar)) V^T,
 //
 // with F_ij = 1 / (w_j - w_i) off the diagonal. A is symmetric, so dA and Abar
-// are symmetrised. F is zero where two eigenvalues are equal: there the
-// eigenvectors are any basis of their eigenspace, and a score that depends on
-// that choice has no derivative, while one that does not depends on V only
-// through V^T Vbar's symmetric part, which F multiplies by zero.
+// are symmetrised. Where two eigenvalues are equal their eigenvectors are any
+// basis of the eigenspace and have no derivative. F is zero there, which keeps
+// the derivative of a symmetric function of the eigenvalues, such as
+// sum_k g(w_k), finite and exact. A score that also reads the eigenvectors
+// gets no term coupling the tied pair; for tr(f(A) B) that term is
+// f'(w) (V^T B V)_ij. Near a tie, F o (V^T Vbar) divides the rounding error of
+// V^T Vbar by the gap.
 class CompositeEighDerivative {
   CompositeOp op;
   OpBuilder &builder;
