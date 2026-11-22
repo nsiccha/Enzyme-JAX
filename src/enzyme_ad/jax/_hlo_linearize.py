@@ -181,7 +181,7 @@ def linearize_hlo(source, activity, before_ad, after_ad):
             [],
             joint,
             "enzyme,arith-raise{stablehlo=true},enzyme-batch-to-stablehlo,"
-            "canonicalize,remove-unnecessary-enzyme-ops,"
+            "canonicalize,remove-unnecessary-enzyme-ops,lower-enzymexla-math,"
             + after_ad
             + ",tensor-empty-raise,drop-unsupported-attributes",
         )
