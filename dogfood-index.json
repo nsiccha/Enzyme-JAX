@@ -3,14 +3,14 @@
   "line": {
     "repo": "nsiccha/Enzyme-JAX",
     "ref": "dogfood",
-    "sha": "b933d2ec9957c870ea152d16ec0cc48b208a9964"
+    "sha": "050e7e59da4d1a55008c57fd69c5b6680638cc88"
   },
   "upstream": {
     "repo": "EnzymeAD/Enzyme-JAX",
     "ref": "main",
-    "sha": "7598c00c85e011ceae9f19b695ada92322870cca"
+    "sha": "c2e34d38ca69f075bef87d4289bb2de8c867ad25"
   },
-  "prepared_at": "2026-11-19T03:35:25+00:00",
+  "prepared_at": "2026-11-22T05:46:04+00:00",
   "problems": [
     {
       "id": "triangular-solve-ad",
@@ -79,7 +79,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -130,6 +130,24 @@
           "native_build": "7530f3f52bc7768775fbef6286ad017fc5070505661ef617ef03427b1f661e6e",
           "result": "passed",
           "detail": "The width-two and four scalar complex triangular-solve fixtures passed on both CPU hosts. The interpreter rejected a deliberately incorrect expected tangent."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-adjoint.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -189,7 +207,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -224,6 +242,16 @@
           "result": "passed",
           "detail": "1,720 lit tests passed on the rebased topic; worst forward relative error 5.0e-10.",
           "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3276"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/cholesky.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -270,7 +298,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -303,6 +331,15 @@
           "result": "passed",
           "detail": "With the rebased Cholesky and LU commits, 1,721 lit tests passed. Worst forward relative error 5.0e-10.",
           "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3279"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/lu.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -366,7 +403,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -407,6 +444,15 @@
           "result": "passed",
           "detail": "Worst reported relative error 5.1e-9. The complex CPU runs used QRIteration.",
           "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3277"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/svd.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ],
       "draft": {
@@ -464,7 +510,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -488,6 +534,16 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/convertconvert.mlir",
+            "test/lit_tests/convertconvert_float.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -537,7 +593,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -559,6 +615,15 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/abs.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -608,7 +673,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -632,6 +697,16 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/reduce_mul.mlir",
+            "test/lit_tests/diffrules/stablehlo/reduce_mul_complex.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -688,7 +763,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -738,6 +813,15 @@
           "detail": "PR #3298 records 1,402 lit tests and 126 runtime checks in a combined CPU build with the derivative repairs. CUDA was outside that run.",
           "evidence": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3298",
           "julia": "1.10.11"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -829,7 +913,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -861,6 +945,15 @@
           "result": "passed",
           "detail": "The retained manifest records 1,417 lit tests, both focused RUN lines, 148 directive and 193 numeric mutation checks on the earlier accepted build.",
           "evidence": "https://github.com/nsiccha/Reactant.jl/blob/24383df755ab7b1641048dfcb8d67e29fbef7097/contrib/dogfood/stack.json"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/reducepad.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -906,7 +999,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -930,6 +1023,16 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/reshapedus_unchanged.mlir",
+            "test/lit_tests/reshapedynamicslice.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -979,7 +1082,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -1009,6 +1112,19 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/autobatching/loop_to_reduce.mlir",
+            "test/lit_tests/dotsimplify.mlir",
+            "test/lit_tests/exponential_minus_one_simplify.mlir",
+            "test/lit_tests/selfsubtract.mlir",
+            "test/lit_tests/while_pad_induction_reduction.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -1058,7 +1174,7 @@
         {
           "name": "Enzyme source",
           "repo": "nsiccha/Enzyme",
-          "sha": "68a07ff37d599682474dfda7e2fc324620e690d2",
+          "sha": "09f4483f63f8a730e227e25040f425c9252bfbd5",
           "why": "The opt-in Reactant stack selects this compiler revision."
         }
       ],
@@ -1080,6 +1196,15 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/linalg/lapack/gesdd_complex.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     },
@@ -1121,6 +1246,15 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/slicedotgeneral_strided_extents.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ],
       "requires": [],
@@ -1136,6 +1270,10 @@
         {
           "relation": "related",
           "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3506"
+        },
+        {
+          "relation": "related",
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/4005"
         }
       ],
       "fix": {
@@ -1214,6 +1352,20 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/checkpoint_requested_parallel.mlir",
+            "test/lit_tests/checkpoint_requested_unroll.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_checkpointing_replayed_capture.mlir",
+            "test/lit_tests/if.mlir",
+            "test/lit_tests/slice_if_result_dominance.mlir",
+            "test/lit_tests/while_repeated_induction_reduction.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ],
       "requires": [],
@@ -1262,6 +1414,15 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/while_affine_index_nested_loop.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ],
       "requires": [],
@@ -1273,7 +1434,12 @@
       "title": "Shape specialization expands explicitly retained loops",
       "summary": "Frontend-marked loops preserve control flow, invariant work and lazy branches through optimization, batching, reverse differentiation and XLA export.",
       "repairs": [],
-      "upstream_refs": [],
+      "upstream_refs": [
+        {
+          "relation": "related",
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/4005"
+        }
+      ],
       "fix": {
         "branch": "dogfood",
         "commits": [
@@ -1353,6 +1519,13 @@
             "original": [
               "b933d2ec9957c870ea152d16ec0cc48b208a9964"
             ]
+          },
+          {
+            "sha": "d8666103b7f7ef5cd787a1a269aec270fe513401",
+            "original": [
+              "d8666103b7f7ef5cd787a1a269aec270fe513401"
+            ],
+            "title": "Merge Enzyme-JAX main through c2e34d38 into dogfood"
           }
         ],
         "why_together": "These changes implement the behavior described above and supply its regression coverage on dogfood."
@@ -1406,6 +1579,23 @@
           "native_build": "c81187861a4d737cd598ee3e174d66799c4b8bc10fe5bf148d4cbed2b3140bca",
           "result": "passed",
           "detail": "The laptop verified six guarded logarithm cotangents across positive, negative and zero inputs. The compiled split primal and reverse each retain their loop."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/batchtests/custom_call.mlir",
+            "test/lit_tests/batchtests/pad.mlir",
+            "test/lit_tests/batchtests/preserve_loop.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_preserve_loop.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_singleton_tensor_cache.mlir",
+            "test/lit_tests/preserve_control_flow_export.mlir",
+            "test/lit_tests/preserve_loop.mlir",
+            "test/lit_tests/preserve_loop_bounds.mlir",
+            "test/lit_tests/preserve_loop_licm.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ],
       "requires": [],
@@ -1493,6 +1683,16 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/preserve_gather_order.mlir",
+            "test/lit_tests/preserve_reduction_export.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ],
       "requires": [],
@@ -1559,6 +1759,15 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/while_early_exit_cache.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ],
       "requires": [],
@@ -1647,6 +1856,19 @@
           "native_build": "9d3ae0c784a1d7bdeeafa01b108a7dbf8f21d21e6401bcee0be4ea667ac4ad97",
           "result": "passed",
           "detail": "LLVM 24 Enzyme-JAX lit on fixture source 8c1490b4e1fa6957ee4767926e38861e4215fb00. The run recorded each fixture separately."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/case.mlir",
+            "test/lit_tests/diffrules/stablehlo/case_remove.mlir",
+            "test/lit_tests/diffrules/stablehlo/if.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_nested_if_adjoint.mlir",
+            "test/lit_tests/while_if_nested_removal.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ],
       "requires": [],
@@ -1709,6 +1931,108 @@
           ],
           "native_build": "f6ee18154b7f4ff6fdce856fc3c3e408b7f39dc0",
           "detail": "Bazel could not find enzymexlamlir-opt in the Reactant runfiles. The same binary and fixture passed all four compiler lowerings when invoked directly."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        }
+      ]
+    },
+    {
+      "id": "triangular-solve-generated-unused-operand",
+      "title": "An unused generated operand prevents the triangular-solve rules from compiling with strict warnings",
+      "summary": "The helper that forms the triangular-solve outer product accepts a matrix operand it never reads. Both generated derivative implementations declare an unused mlir::Value. Clang rejects the generated code when unused-variable warnings are errors.",
+      "role": "fix",
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "dca478ba3f0bd6ae61e32379bd9ec7ea2fc834c4",
+            "title": "Drop the unused operand of the triangular_solve outer-product subroutines",
+            "original": [
+              "dca478ba3f0bd6ae61e32379bd9ec7ea2fc834c4"
+            ]
+          }
+        ]
+      },
+      "upstream_refs": [
+        {
+          "relation": "related",
+          "url": "https://github.com/EnzymeAD/Enzyme-JAX/pull/3948"
+        }
+      ],
+      "draft": {
+        "title": "Triangular-solve derivatives generate an unused local under Clang",
+        "body": "Build the XLADerivatives target with Clang 21 and -Werror=unused-variable after #3948. The generated MHLO and StableHLO implementations declare an unused mlir::Value for the matrix operand in TriangularSolveDiffOuterRaw. Removing that operand from the two TableGen subroutines and their call sites lets both implementations compile."
+      },
+      "validation": [
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-adjoint.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        }
+      ]
+    },
+    {
+      "id": "adaptive-while-reverse",
+      "title": "Reverse differentiation needs a static trip bound for a data-dependent while loop",
+      "summary": "The forward pass counts actual iterations of a replayable stablehlo.while. Reverse mode uses binomial checkpointing with 32 carry snapshots by default. The body and its callees must be free of memory effects, and the carried tensors must have static shapes. The checkpoint period selects the snapshot budget. Explicitly disabling checkpointing retains the bounded tape path.",
+      "role": "fix",
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "b5cc596c27783d666a86afc8655e4d251479b109",
+            "title": "Reverse-differentiate stablehlo.while loops whose trip count is data-dependent",
+            "original": [
+              "b5cc596c27783d666a86afc8655e4d251479b109"
+            ]
+          }
+        ]
+      },
+      "draft": {
+        "title": "Reverse-differentiate a replayable stablehlo.while with a data-dependent trip count",
+        "body": "A convergence test in an adaptive integrator can make the trip count unknowable until the forward run finishes. Without a static bound, reverse differentiation fails during cache removal. With a large bound it can allocate a correspondingly large tape. The regression in test/lit_tests/diffrules/stablehlo/while_data_dependent_trip_count.mlir checks gradients for zero trips, nested loops and several snapshot budgets. A second fixture checks that replay preserves the behavior of callbacks."
+      },
+      "validation": [
+        {
+          "base": "b933d2ec9957c870ea152d16ec0cc48b208a9964",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/while_data_dependent_trip_count.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_data_dependent_trip_count_effects.mlir"
+          ],
+          "result": "passed",
+          "detail": "On producer commit b5cc596c27783d666a86afc8655e4d251479b109, the Enzyme-JAX maintainer reported 88 passing while and checkpoint fixtures. The interpreter gave the expected gradients at 0 ULP for the numeric fixture. The effects fixture checked that a loop calling the host is excluded from replay."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 050e7e59da4d1a55008c57fd69c5b6680638cc88 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/while2.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_data_dependent_trip_count.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_data_dependent_trip_count_effects.mlir",
+            "test/lit_tests/while_early_exit_cache.mlir"
+          ],
+          "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
         }
       ]
     }
