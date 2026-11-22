@@ -72,6 +72,14 @@ LogicalResult WhileLoopInfo::computeInfo() {
     return failure();
   }
 
+  // A floating-point induction variable rounds in every increment, so no
+  // closed form gives its trip count: `s < 1.0; s += 0.1` runs 11 times, not
+  // (1.0 - 0) / 0.1 = 10.
+  auto inductTy = dyn_cast<RankedTensorType>(induct.getType());
+  if (!inductTy || !isa<IntegerType>(inductTy.getElementType())) {
+    return failure();
+  }
+
   start = op->getOperand(induct.getArgNumber());
   limit = cond.getOperand(1);
 
@@ -177,7 +185,7 @@ int64_t WhileLoopInfo::getConstantNumIters() {
   int64_t start = getConstantStart().value(),
           limit = getConstantLimit().value(), step = getConstantStep().value();
 
-  if (limit < start) // cmp is lt
+  if (limit <= start) // cmp is lt
     return 0;
 
   if (step < 0 && limit > start)
@@ -203,16 +211,34 @@ Value WhileLoopInfo::getNumIters(mlir::OpBuilder &builder,
     return {};
   }
 
-  // numIters = (limit - start) / step;
-  Value stepVal = getStep(builder, mapping);
-  Value numIters = stablehlo::DivOp::create(
-      builder, op->getLoc(),
-      stablehlo::SubtractOp::create(builder, op->getLoc(),
-                                    mapping.lookupOrDefault(limit),
-                                    mapping.lookupOrDefault(start)),
-      stepVal);
+  // numIters = start < limit ? ceil((limit - start) / step) : 0. The ceiling
+  // is quotient + (remainder != 0), because adding step - 1 before dividing
+  // can overflow. A non-positive step with start < limit never terminates, so
+  // its count does not matter.
+  Location loc = op->getLoc();
+  Value startVal = mapping.lookupOrDefault(start);
+  Value limitVal = mapping.lookupOrDefault(limit);
+  auto countTy = cast<RankedTensorType>(startVal.getType());
+  Value zero = stablehlo::ConstantOp::create(
+      builder, loc, countTy, cast<ElementsAttr>(makeAttr(countTy, 0)));
 
-  return numIters;
+  Value span = stablehlo::SubtractOp::create(builder, loc, limitVal, startVal);
+  Value numIters = span;
+  if (!isStepOne()) {
+    Value stepVal = getStep(builder, mapping);
+    Value quotient = stablehlo::DivOp::create(builder, loc, span, stepVal);
+    Value remainder = stablehlo::RemOp::create(builder, loc, span, stepVal);
+    Value hasRemainder = stablehlo::CompareOp::create(
+        builder, loc, remainder, zero, stablehlo::ComparisonDirection::NE);
+    numIters = stablehlo::AddOp::create(
+        builder, loc, quotient,
+        stablehlo::ConvertOp::create(builder, loc, hasRemainder,
+                                     countTy.getElementType()));
+  }
+
+  Value hasIters = stablehlo::CompareOp::create(
+      builder, loc, startVal, limitVal, stablehlo::ComparisonDirection::LT);
+  return stablehlo::SelectOp::create(builder, loc, hasIters, numIters, zero);
 }
 
 WhileLoopInfo::AffineIndexInfo
