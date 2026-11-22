@@ -16,6 +16,9 @@ from ._hlo_linearize import _pure, _tensor, _walk
 _PREFIX = "__enzyme_linalg_solve_v1_"
 _LOGABSDET_PREFIX = "__enzyme_linalg_logabsdet_v1_"
 _DET_PREFIX = "__enzyme_linalg_det_v1_"
+# __enzyme_linalg_eigh_v1_{f32|f64}_{cpu|gpu}_n{n}: one real symmetric n x n
+# matrix in; eigenvalues (ascending), eigenvectors (columns) and validity out.
+_EIGH_PREFIX = "__enzyme_linalg_eigh_v1_"
 _NAME = "enzyme.linalg.solve"
 _FACTOR = "__enzyme_linalg_factor_v1"
 _CACHED_PREFIX = "__enzyme_linalg_cached_solve_v2_"
@@ -307,9 +310,40 @@ def _check_determinant(call, name, functions):
         raise ValueError("invalid reserved logabsdet tensor signature")
 
 
+def _check_eigh(call, name, functions):
+    function = functions.get(name)
+    if (
+        function is None
+        or "sym_visibility" not in function.attributes
+        or ir.StringAttr(function.attributes["sym_visibility"]).value != "private"
+        or len(call.operands) != 1
+        or len(call.results) != 3
+        or list(function.type.inputs) != [v.type for v in call.operands]
+        or list(function.type.results) != [v.type for v in call.results]
+        or not pure_function(function, functions)
+        or not all(_tensor(v.type) for v in (*call.operands, *call.results))
+    ):
+        raise ValueError("invalid reserved eigh function contract")
+    a = ir.RankedTensorType(call.operands[0].type)
+    values, vectors, valid = (ir.RankedTensorType(v.type) for v in call.results)
+    if (
+        len(a.shape) != 2
+        or a.shape[0] == 0
+        or a.shape[0] != a.shape[1]
+        or str(a.element_type) not in ("f32", "f64")
+        or vectors != a
+        or tuple(values.shape) != (a.shape[0],)
+        or values.element_type != a.element_type
+        or tuple(valid.shape) != ()
+        or str(valid.element_type) != "i1"
+    ):
+        raise ValueError("invalid reserved eigh tensor signature")
+
+
 def recognize_linalg(source):
     if not any(
-        prefix in source for prefix in (_PREFIX, _LOGABSDET_PREFIX, _DET_PREFIX)
+        prefix in source
+        for prefix in (_PREFIX, _LOGABSDET_PREFIX, _DET_PREFIX, _EIGH_PREFIX)
     ):
         return source
     with mlir.make_ir_context(), ir.Location.unknown():
@@ -324,14 +358,20 @@ def recognize_linalg(source):
             for op in _walk(module.operation)
             if op.name == "func.call"
             and ir.FlatSymbolRefAttr(op.attributes["callee"]).value.startswith(
-                (_PREFIX, _LOGABSDET_PREFIX, _DET_PREFIX)
+                (_PREFIX, _LOGABSDET_PREFIX, _DET_PREFIX, _EIGH_PREFIX)
             )
         ]
         for call in calls:
             name = ir.FlatSymbolRefAttr(call.attributes["callee"]).value
             logarithm = name.startswith(_LOGABSDET_PREFIX)
             determinant = name.startswith((_LOGABSDET_PREFIX, _DET_PREFIX))
-            (_check_determinant if determinant else _check_solve)(call, name, functions)
+            eigh = name.startswith(_EIGH_PREFIX)
+            if eigh:
+                _check_eigh(call, name, functions)
+            else:
+                (_check_determinant if determinant else _check_solve)(
+                    call, name, functions
+                )
             with ir.InsertionPoint(call):
                 composite = ir.Operation.create(
                     "stablehlo.composite",
@@ -339,13 +379,17 @@ def recognize_linalg(source):
                     results=[v.type for v in call.results],
                     attributes={
                         "name": ir.StringAttr.get(
-                            (
-                                "enzyme.linalg.logabsdet"
-                                if logarithm
-                                else "enzyme.linalg.det"
+                            "enzyme.linalg.eigh"
+                            if eigh
+                            else (
+                                (
+                                    "enzyme.linalg.logabsdet"
+                                    if logarithm
+                                    else "enzyme.linalg.det"
+                                )
+                                if determinant
+                                else _NAME
                             )
-                            if determinant
-                            else _NAME
                         ),
                         "decomposition": ir.FlatSymbolRefAttr.get(name),
                         "composite_attributes": ir.DictAttr.get({}),

@@ -3832,13 +3832,223 @@ public:
   }
 };
 
+// A real symmetric eigendecomposition A = V diag(w) V^T, w ascending, the
+// eigenvectors the columns of V. Its derivative needs only the results, so
+// neither direction differentiates the decomposition's iterations:
+//
+//   dw = diag(V^T dA V),  dV = V (F o (V^T dA V)),
+//   Abar = V (diag(wbar) + F o (V^T Vbar)) V^T,
+//
+// with F_ij = 1 / (w_j - w_i) off the diagonal. A is symmetric, so dA and Abar
+// are symmetrised. F is zero where two eigenvalues are equal: there the
+// eigenvectors are any basis of their eigenspace, and a score that depends on
+// that choice has no derivative, while one that does not depends on V only
+// through V^T Vbar's symmetric part, which F multiplies by zero.
+class CompositeEighDerivative {
+  CompositeOp op;
+  OpBuilder &builder;
+  Location loc;
+
+public:
+  CompositeEighDerivative(CompositeOp op, OpBuilder &builder)
+      : op(op), builder(builder), loc(op.getLoc()) {}
+
+  static LogicalResult check(CompositeOp op, int64_t width) {
+    if (op.getName() != "enzyme.linalg.eigh" || op.getVersion() != 1 ||
+        !op.getCompositeAttributes().empty() || !op->getRegions().empty() ||
+        op->getNumOperands() != 1 || op->getNumResults() != 3 || width != 1)
+      return op.emitOpError("unsupported eigh composite contract");
+    auto a = dyn_cast<RankedTensorType>(op->getOperand(0).getType());
+    auto values = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    auto valid = dyn_cast<RankedTensorType>(op->getResult(2).getType());
+    if (!a || !values || !valid || !a.hasStaticShape() || a.getRank() < 2 ||
+        a.getDimSize(a.getRank() - 1) == 0 ||
+        a.getDimSize(a.getRank() - 1) != a.getDimSize(a.getRank() - 2) ||
+        !(a.getElementType().isF32() || a.getElementType().isF64()) ||
+        op->getResult(1).getType() != a ||
+        values.getShape() != a.getShape().drop_back() ||
+        values.getElementType() != a.getElementType() ||
+        valid.getShape() != a.getShape().drop_back(2) ||
+        !valid.getElementType().isInteger(1))
+      return op.emitOpError(
+          "expected real symmetric eigenvalues, eigenvectors and validity");
+    return success();
+  }
+
+  RankedTensorType matrixType() {
+    return cast<RankedTensorType>(op->getOperand(0).getType());
+  }
+
+  Value constant(double value, Type type) {
+    return ConstantOp::create(builder, loc,
+                              cast<ElementsAttr>(makeAttr(type, value)));
+  }
+
+  // w broadcast along the row (rowIndex = true: entry (i, j) holds w_i) or the
+  // column (w_j) of a matrix.
+  Value spread(Value w, bool rowIndex) {
+    auto type = matrixType();
+    int64_t rank = type.getRank();
+    SmallVector<int64_t> axes;
+    for (int64_t i = 0; i < rank - 2; ++i)
+      axes.push_back(i);
+    axes.push_back(rowIndex ? rank - 2 : rank - 1);
+    return BroadcastInDimOp::create(builder, loc, type, w,
+                                    builder.getDenseI64ArrayAttr(axes));
+  }
+
+  Value identity() {
+    auto type = matrixType();
+    int64_t rank = type.getRank();
+    auto indexType =
+        RankedTensorType::get(type.getShape(), builder.getI64Type());
+    Value rows = IotaOp::create(builder, loc, indexType, rank - 2);
+    Value cols = IotaOp::create(builder, loc, indexType, rank - 1);
+    return CompareOp::create(builder, loc, rows, cols, ComparisonDirection::EQ);
+  }
+
+  // F_ij = 1 / (w_j - w_i), zero where w_i == w_j (the diagonal included).
+  Value gapInverse(Value w) {
+    auto type = matrixType();
+    Value gap =
+        SubtractOp::create(builder, loc, spread(w, false), spread(w, true));
+    Value zero = makeZero(builder, loc, type);
+    Value tie =
+        CompareOp::create(builder, loc, gap, zero, ComparisonDirection::EQ);
+    Value safe = SelectOp::create(builder, loc, tie, constant(1, type), gap);
+    Value inverse = DivOp::create(builder, loc, constant(1, type), safe);
+    return SelectOp::create(builder, loc, tie, zero, inverse);
+  }
+
+  Value diagonalMatrix(Value w) {
+    return SelectOp::create(builder, loc, identity(), spread(w, true),
+                            makeZero(builder, loc, matrixType()));
+  }
+
+  Value diagonal(Value matrix) {
+    auto type = matrixType();
+    auto scalar = RankedTensorType::get({}, type.getElementType());
+    Value masked = SelectOp::create(builder, loc, identity(), matrix,
+                                    makeZero(builder, loc, type));
+    auto reduce = ReduceOp::create(
+        builder, loc, TypeRange{op->getResult(0).getType()}, ValueRange{masked},
+        ValueRange{makeZero(builder, loc, scalar)},
+        ArrayRef<int64_t>{type.getRank() - 1});
+    Block *body = new Block();
+    reduce.getBody().push_back(body);
+    body->addArguments({scalar, scalar}, {loc, loc});
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToEnd(body);
+    ReturnOp::create(
+        builder, loc,
+        AddOp::create(builder, loc, body->getArgument(0), body->getArgument(1))
+            .getResult());
+    return reduce->getResult(0);
+  }
+
+  // Zero where the decomposition is invalid; select, so a NaN there stays out.
+  Value maskVector(Value value, Value valid) {
+    auto type = cast<RankedTensorType>(value.getType());
+    auto predType = RankedTensorType::get(type.getShape(), builder.getI1Type());
+    SmallVector<int64_t> axes;
+    for (int64_t i = 0; i < type.getRank() - 1; ++i)
+      axes.push_back(i);
+    Value pred = BroadcastInDimOp::create(builder, loc, predType, valid,
+                                          builder.getDenseI64ArrayAttr(axes));
+    return SelectOp::create(builder, loc, pred, value,
+                            makeZero(builder, loc, type));
+  }
+
+  Value symmetrize(Value matrix, CompositeSolveDerivative &algebra) {
+    Value sum = AddOp::create(builder, loc, matrix, algebra.transpose(matrix));
+    return MulOp::create(builder, loc, sum, constant(0.5, matrixType()));
+  }
+
+  LogicalResult forward(MGradientUtils *gutils) {
+    if (failed(check(op, gutils->width)))
+      return failure();
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointAfter(gutils->getNewFromOriginal(op));
+    if (!gutils->isConstantValue(op->getResult(2)))
+      gutils->setDiffe(op->getResult(2),
+                       makeZero(builder, loc, op->getResult(2).getType()),
+                       builder);
+    if (gutils->isConstantValue(op->getOperand(0)))
+      return success();
+    CompositeSolveDerivative algebra(op, builder);
+    Value w = gutils->getNewFromOriginal(op->getResult(0));
+    Value v = gutils->getNewFromOriginal(op->getResult(1));
+    Value valid = gutils->getNewFromOriginal(op->getResult(2));
+    Value da = gutils->invertPointerM(op->getOperand(0), builder);
+    da = algebra.mask(symmetrize(da, algebra), valid);
+    // V^T dA V, the perturbation in the eigenbasis.
+    Value rotated = algebra.multiply(algebra.transpose(v), da, matrixType());
+    rotated = algebra.multiply(rotated, v, matrixType());
+    if (!gutils->isConstantValue(op->getResult(0)))
+      gutils->setDiffe(op->getResult(0), maskVector(diagonal(rotated), valid),
+                       builder);
+    if (!gutils->isConstantValue(op->getResult(1))) {
+      Value mixed = MulOp::create(builder, loc, gapInverse(w), rotated);
+      Value tangent = algebra.multiply(v, mixed, matrixType());
+      gutils->setDiffe(op->getResult(1), algebra.mask(tangent, valid), builder);
+    }
+    return success();
+  }
+
+  LogicalResult reverse(MGradientUtilsReverse *gutils,
+                        SmallVector<Value> caches) {
+    if (failed(check(op, gutils->width)))
+      return failure();
+    if (gutils->isConstantValue(op->getOperand(0)))
+      return success();
+    CompositeSolveDerivative algebra(op, builder);
+    Value w = gutils->popCache(caches[0], builder);
+    Value v = gutils->popCache(caches[1], builder);
+    Value valid = gutils->popCache(caches[2], builder);
+    Value inner = makeZero(builder, loc, matrixType());
+    if (!gutils->isConstantValue(op->getResult(0))) {
+      Value seed = gutils->diffe(op->getResult(0), builder);
+      gutils->zeroDiffe(op->getResult(0), builder);
+      inner = AddOp::create(builder, loc, inner, diagonalMatrix(seed));
+    }
+    if (!gutils->isConstantValue(op->getResult(1))) {
+      Value seed = gutils->diffe(op->getResult(1), builder);
+      gutils->zeroDiffe(op->getResult(1), builder);
+      Value projected =
+          algebra.multiply(algebra.transpose(v), seed, matrixType());
+      inner =
+          AddOp::create(builder, loc, inner,
+                        MulOp::create(builder, loc, gapInverse(w), projected));
+    }
+    Value gradient = algebra.multiply(v, inner, matrixType());
+    gradient = algebra.multiply(gradient, algebra.transpose(v), matrixType());
+    gradient = algebra.mask(symmetrize(gradient, algebra), valid);
+    gutils->addToDiffe(op->getOperand(0), gradient, builder);
+    return success();
+  }
+
+  static SmallVector<Value> cache(CompositeOp op,
+                                  MGradientUtilsReverse *gutils) {
+    if (gutils->isConstantValue(op->getOperand(0)))
+      return {};
+    Operation *primal = gutils->getNewFromOriginal(op);
+    OpBuilder builder(primal);
+    builder.setInsertionPointAfter(primal);
+    SmallVector<Value> caches;
+    for (unsigned i : {0u, 1u, 2u})
+      caches.push_back(gutils->initAndPushCache(primal->getResult(i), builder));
+    return caches;
+  }
+};
+
 struct SolveDataFlow
     : ADDataFlowOpInterface::ExternalModel<SolveDataFlow, CompositeOp> {
   SmallVector<Value> getPotentialIncomingValuesRes(Operation *orig,
                                                    OpResult result) const {
     auto op = cast<CompositeOp>(orig);
     if ((op.getName() == "enzyme.linalg.logabsdet" ||
-         op.getName() == "enzyme.linalg.det") &&
+         op.getName() == "enzyme.linalg.det" ||
+         op.getName() == "enzyme.linalg.eigh") &&
         op->getNumResults() == 3 && op->getNumOperands() == 1)
       return result.getResultNumber() == 2
                  ? SmallVector<Value>{}
@@ -4002,6 +4212,8 @@ struct AutoDiffCompositeSolveFwd
     if (op.getName() == "enzyme.linalg.logabsdet" ||
         op.getName() == "enzyme.linalg.det")
       return CompositeDeterminantDerivative(op, builder).forward(gutils);
+    if (op.getName() == "enzyme.linalg.eigh")
+      return CompositeEighDerivative(op, builder).forward(gutils);
     if (failed(CompositeSolveDerivative::check(op, gutils->width)))
       return failure();
     OpBuilder::InsertionGuard guard(builder);
@@ -4050,6 +4262,8 @@ struct AutoDiffCompositeSolveRev
         op.getName() == "enzyme.linalg.det")
       return CompositeDeterminantDerivative(op, builder)
           .reverse(gutils, caches);
+    if (op.getName() == "enzyme.linalg.eigh")
+      return CompositeEighDerivative(op, builder).reverse(gutils, caches);
     if (failed(CompositeSolveDerivative::check(op, gutils->width)))
       return failure();
     if (gutils->isConstantValue(op->getResult(0)))
@@ -4084,6 +4298,8 @@ struct AutoDiffCompositeSolveRev
     auto op = cast<CompositeOp>(orig);
     if (op.getName() == "enzyme.math.log_ndtr")
       return LogNdtrDerivative::cache(op, gutils);
+    if (op.getName() == "enzyme.linalg.eigh")
+      return CompositeEighDerivative::cache(op, gutils);
     if (op.getName() == "enzyme.linalg.logabsdet" ||
         op.getName() == "enzyme.linalg.det") {
       if (gutils->isConstantValue(op->getOperand(0)))
@@ -4133,12 +4349,15 @@ struct SHLOCompositeSolveBatch
     if (op.getName() != "enzyme.linalg.solve" &&
         op.getName() != "enzyme.linalg.logabsdet" &&
         op.getName() != "enzyme.linalg.det" &&
+        op.getName() != "enzyme.linalg.eigh" &&
         op.getName() != "enzyme.math.log_ndtr")
       return failure();
     if (failed(op.getName() == "enzyme.linalg.solve"
                    ? CompositeSolveDerivative::check(op, 1)
                : op.getName() == "enzyme.math.log_ndtr"
                    ? LogNdtrDerivative::check(op)
+               : op.getName() == "enzyme.linalg.eigh"
+                   ? CompositeEighDerivative::check(op, 1)
                    : CompositeDeterminantDerivative::check(op, 1)))
       return failure();
     auto function = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
