@@ -26,7 +26,9 @@
 #include "llvm/ADT/ScopeExit.h"
 
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/MemorySlotInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/Utils/MemorySlotUtils.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/RegionUtils.h"
@@ -1517,6 +1519,544 @@ public:
     return makeForLoop(builder, loc, zero, cmp.getOperand(1), one, inits);
   }
 
+  //===--------------------------------------------------------------------===//
+  // Loops whose trip count is data-dependent.
+  //
+  // WhileLoopInfo cannot count an adaptive integrator's step loop
+  // (`t_end - t > eps && accepted < max_steps && !failed`) or an early-exit
+  // search: the number of trips is only known once the loop has run, and no
+  // tensor can be sized by it. Taping every iteration would need a buffer as
+  // large as the largest trip count the condition allows -- a user bound such
+  // as an ODE solver's max_steps, which can be 1e8.
+  //
+  // Such a loop is instead reversed by binomial (Revolve) checkpointing over
+  // the trip count it actually ran:
+  //
+  //  - forward, it runs unchanged plus a trip counter, and caches only the trip
+  //    count N, its initial carry x0 and the values its body reads from above;
+  //  - reverse, one loop of N iterations reverses step N-1 down to 0. Each
+  //    iteration restores the newest snapshot, replays the body forward to the
+  //    step being reversed while placing snapshots at Revolve positions
+  //    (enzyme.binomial_progress), and differentiates that one step.
+  //
+  // The snapshot stack starts with x0 alone, so the first reverse iteration
+  // performs the placement sweep that the counted-loop scheme
+  // (LoopCheckpointing::cacheBinomial) runs forward, where N must be known
+  // before the first step. Nothing scales with N except time: memory is
+  // `budget` snapshots of the carry, and the replay costs at most t*N body
+  // evaluations, with t the smallest integer such that C(budget+t, t) >= N.
+  //
+  // The condition region is never re-evaluated: replaying the body N times
+  // from x0 reproduces the forward states.
+  //
+  // A step whose adjoint reads nothing of the state it starts from needs no
+  // snapshots and no replay: the reverse loop then only carries the adjoints,
+  // as it would for a counted loop. Whether it does is known once the step is
+  // differentiated, so the replay is added to the reverse loop afterwards.
+  //
+  // `enzyme.checkpoint_period` sets the snapshot budget, as it does for
+  // binomial checkpointing of a counted loop; `enzyme.enable_checkpointing =
+  // false` asks for the plain reverse path instead, which tapes every
+  // iteration and so needs a static bound on the trip count.
+  //===--------------------------------------------------------------------===//
+
+  // The default number of snapshots. With 32 the replays cost at most t*N body
+  // evaluations in all, with t = 3 up to N = 6545 (C(35, 3)), t = 5 up to
+  // N = 435897 (C(37, 5)) and t = 9 at N = 1e8.
+  static constexpr int64_t kDefaultTripCheckpointBudget = 32;
+
+  // Replaying a loop rebinds the values it reads from above to the copies
+  // popped for the replay, so the reverse rules of the replayed body read
+  // those. The ops visited after the loop must see the caller's values again:
+  // this restores the previous bindings on exit.
+  class OutsideMappingsGuard {
+  public:
+    OutsideMappingsGuard(stablehlo::WhileOp op, MGradientUtilsReverse *gutils)
+        : gutils(gutils) {
+      SetVector<Value> refs;
+      getUsedValuesDefinedAbove(op->getRegions(), refs);
+      for (Value ref : refs)
+        saved.emplace_back(ref, gutils->originalToNewFn.lookupOrNull(ref));
+    }
+    ~OutsideMappingsGuard() {
+      for (auto [ref, previous] : saved) {
+        if (previous)
+          gutils->originalToNewFn.map(ref, previous);
+        else
+          gutils->originalToNewFn.erase(ref);
+      }
+    }
+    OutsideMappingsGuard(const OutsideMappingsGuard &) = delete;
+    OutsideMappingsGuard &operator=(const OutsideMappingsGuard &) = delete;
+
+  private:
+    MGradientUtilsReverse *gutils;
+    SmallVector<std::pair<Value, Value>> saved;
+  };
+
+  // WhileLoopInfo also accepts a floating-point accumulator compared against a
+  // limit (`t < t_end` with `t += h`), but how many trips that takes is decided
+  // by rounding, not by (limit - start) / step. Only an integer induction
+  // variable counts a loop.
+  static bool hasIntegerInductionVariable(WhileLoopInfo &info) {
+    return info.isValid() &&
+           getElementTypeOrSelf(info.getStart().getType()).isInteger();
+  }
+
+  // Whether the plain reverse path knows how many trips `op` takes: its bounds
+  // are constants, or the trip count is limit - start, read from outside the
+  // loop. WhileLoopInfo::getNumIters divides by a dynamic step, which only
+  // counts exactly for a unit one.
+  static bool hasCountedTrips(stablehlo::WhileOp op) {
+    WhileLoopInfo info(op);
+    if (info.computeInfo().failed() || !hasIntegerInductionVariable(info))
+      return false;
+    if (info.isConstant())
+      return true;
+    return info.isStepOne() &&
+           info.getLimit().getParentRegion()->isAncestor(op->getParentRegion());
+  }
+
+  // Whether the scheme above can reverse `op`: it runs the body again, so the
+  // body must have no effects (a host callback or an outfeed would repeat, and
+  // stablehlo.rng would draw new numbers), and it snapshots the carried values
+  // into tensors, so they must have static shapes.
+  static bool canReplay(stablehlo::WhileOp op) {
+    for (Type ty : op->getOperandTypes()) {
+      auto TT = dyn_cast<RankedTensorType>(ty);
+      if (!TT || !TT.hasStaticShape())
+        return false;
+    }
+    DenseSet<Operation *> visited;
+    return isReplayable(op.getBody(), visited);
+  }
+
+  // Whether running the ops in `region` again has no effect. An op counts if it
+  // has no memory effects of its own (the ops it holds are walked in turn), or
+  // if it calls a function whose body counts, as JAX's helpers (`clip`,
+  // `_where`) are called from loop bodies. `visited` stops at a function that
+  // is already being checked.
+  static bool isReplayable(Region &region, DenseSet<Operation *> &visited) {
+    return !region
+                .walk([&](Operation *op) {
+                  if (auto call = dyn_cast<CallOpInterface>(op)) {
+                    auto callee = dyn_cast_or_null<FunctionOpInterface>(
+                        call.resolveCallable());
+                    if (!callee || callee.isExternal())
+                      return WalkResult::interrupt();
+                    if (visited.insert(callee).second &&
+                        !isReplayable(callee.getFunctionBody(), visited))
+                      return WalkResult::interrupt();
+                    return WalkResult::advance();
+                  }
+                  if (op->hasTrait<OpTrait::HasRecursiveMemoryEffects>() ||
+                      isMemoryEffectFree(op))
+                    return WalkResult::advance();
+                  return WalkResult::interrupt();
+                })
+                .wasInterrupted();
+  }
+
+  // Whether `op` is reversed by the scheme above: the plain path cannot count
+  // its trips, it can be replayed, and checkpointing was not turned off for it.
+  // A loop that cannot be replayed keeps the taped path, which needs a static
+  // bound on its trip count.
+  static bool needsTripCheckpointing(stablehlo::WhileOp op) {
+    if (auto enabled =
+            op->getAttrOfType<BoolAttr>(enableCheckpointingAttrName()))
+      if (!enabled.getValue())
+        return false;
+    return !hasCountedTrips(op) && canReplay(op);
+  }
+
+  // The values the body reads from enclosing scopes. The replays need them
+  // inside the reverse loop, where the forward values are out of reach, so
+  // they are cached; the forward and reverse halves call this on the same
+  // original op and get the same order.
+  static SmallVector<Value> getTripReplayRefs(stablehlo::WhileOp op) {
+    SetVector<Value> refs;
+    getUsedValuesDefinedAbove(op.getBody(), refs);
+    return SmallVector<Value>(refs.begin(), refs.end());
+  }
+
+  // Adds an i64 trip counter to the primal loop `newWhile` (the clone of
+  // `orig`), replacing it with a loop that returns the count as its last
+  // result. Returns that loop and the count.
+  static std::pair<stablehlo::WhileOp, Value>
+  addTripCounter(Operation *orig, stablehlo::WhileOp newWhile, Type elementType,
+                 MGradientUtilsReverse *gutils) {
+    OpBuilder builder(newWhile);
+    auto cond = &newWhile.getCond().front();
+    auto body = &newWhile.getBody().front();
+
+    auto unrankedTensorType = RankedTensorType::get({}, elementType);
+    auto numItersInit =
+        ConstantOp::create(
+            builder, orig->getLoc(), unrankedTensorType,
+            SplatElementsAttr::get(
+                unrankedTensorType,
+                ArrayRef<Attribute>(IntegerAttr::get(elementType, 0))))
+            .getResult();
+
+    newWhile->insertOperands(newWhile->getNumOperands(),
+                             ValueRange(numItersInit));
+    cond->addArgument(numItersInit.getType(), orig->getLoc());
+    Value numItersInBlock =
+        body->addArgument(numItersInit.getType(), orig->getLoc());
+
+    OpBuilder inBodyBuilder(body, body->begin());
+    auto one = ConstantOp::create(
+        inBodyBuilder, orig->getLoc(), unrankedTensorType,
+        SplatElementsAttr::get(
+            unrankedTensorType,
+            ArrayRef<Attribute>(IntegerAttr::get(elementType, 1))));
+    numItersInBlock = AddOp::create(inBodyBuilder, orig->getLoc(),
+                                    numItersInBlock, one.getResult());
+    auto term = body->getTerminator();
+    term->insertOperands(term->getNumOperands(), ValueRange(numItersInBlock));
+
+    SmallVector<Type> resultTypes(newWhile->getResultTypes().begin(),
+                                  newWhile->getResultTypes().end());
+    resultTypes.push_back(numItersInit.getType());
+
+    auto newnewWhile = WhileOp::create(builder, orig->getLoc(), resultTypes,
+                                       newWhile->getOperands());
+    copyLoopRetention(newWhile, newnewWhile);
+    // Adding a counter preserves the primal loop's iteration bound.
+    if (auto bound = orig->getAttrOfType<IntegerAttr>(maxTripCountAttr))
+      newnewWhile->setAttr(maxTripCountAttr, bound);
+    newnewWhile.getCond().takeBody(newWhile.getCond());
+    newnewWhile.getBody().takeBody(newWhile.getBody());
+
+    SmallVector<Value> newResults(newnewWhile->getResults().begin(),
+                                  --newnewWhile->getResults().end());
+
+    gutils->replaceOrigOpWith(orig, newResults);
+    gutils->erase(newWhile);
+    gutils->originalToNewFn.map(orig, newnewWhile.getOperation());
+
+    return {newnewWhile,
+            newnewWhile->getResult(newnewWhile->getNumResults() - 1)};
+  }
+
+  // Forward half: count the trips and keep what the replay starts from.
+  // Cache layout: [N, x0 (one per iteration argument), captured values].
+  static SmallVector<Value>
+  cacheTripCheckpointed(stablehlo::WhileOp orig,
+                        MGradientUtilsReverse *gutils) {
+    auto newWhile = cast<WhileOp>(gutils->getNewFromOriginal(orig));
+    SmallVector<Value> inits(newWhile->getOperands().begin(),
+                             newWhile->getOperands().end());
+
+    OpBuilder b(orig->getContext());
+    auto [counted, numIters] =
+        addTripCounter(orig, newWhile, b.getI64Type(), gutils);
+    b.setInsertionPointAfter(counted);
+
+    SmallVector<Value> caches;
+    caches.push_back(gutils->initAndPushCache(numIters, b));
+    for (Value init : inits)
+      caches.push_back(gutils->initAndPushCache(init, b));
+    for (Value ref : getTripReplayRefs(orig))
+      caches.push_back(
+          gutils->initAndPushCache(gutils->getNewFromOriginal(ref), b));
+    return caches;
+  }
+
+  // Whether the step adjoint built in `body` reads the state it was handed,
+  // which `state` stands for. An op in `body` is live if it is the terminator,
+  // has an effect (pushing a cache a reverse rule asked for, say) or feeds a
+  // live op; the state counts as read when a live op uses it.
+  static bool isStepStateLive(Block *body, ValueRange state) {
+    DenseSet<Operation *> live;
+    auto feedsLive = [&](Operation *op) {
+      return llvm::any_of(op->getUsers(), [&](Operation *user) {
+        return live.contains(body->findAncestorOpInBlock(*user));
+      });
+    };
+    for (Operation &op : llvm::reverse(*body))
+      if (op.hasTrait<OpTrait::IsTerminator>() ||
+          !wouldOpBeTriviallyDead(&op) || feedsLive(&op))
+        live.insert(&op);
+    return llvm::any_of(state, [&](Value v) {
+      return llvm::any_of(v.getUsers(), [&](Operation *user) {
+        return live.contains(body->findAncestorOpInBlock(*user));
+      });
+    });
+  }
+
+  // Appends carried values to the counted scaffold loop `loop`, which must not
+  // be finalized yet, and returns their body arguments; they are passed
+  // through unchanged until it is. The loop op is replaced and `loop` updated.
+  static SmallVector<Value> appendScaffoldCarries(ScaffoldLoop &loop,
+                                                  ValueRange inits) {
+    auto oldLoop = cast<stablehlo::WhileOp>(loop.op);
+    Block *cond = &oldLoop.getCond().front();
+    SmallVector<Value> args;
+    for (Value init : inits) {
+      cond->addArgument(init.getType(), init.getLoc());
+      args.push_back(loop.body->addArgument(init.getType(), init.getLoc()));
+    }
+    Operation *term = findTerminator(loop.body);
+    term->insertOperands(term->getNumOperands(), args);
+
+    SmallVector<Value> operands(oldLoop->getOperands());
+    operands.append(inits.begin(), inits.end());
+    OpBuilder b(oldLoop);
+    auto newLoop = stablehlo::WhileOp::create(
+        b, oldLoop.getLoc(), ValueRange(operands).getTypes(), operands);
+    newLoop.getCond().takeBody(oldLoop.getCond());
+    newLoop.getBody().takeBody(oldLoop.getBody());
+    oldLoop->replaceAllUsesWith(
+        newLoop->getResults().take_front(oldLoop->getNumResults()));
+    oldLoop->erase();
+    loop.op = newLoop;
+    return args;
+  }
+
+  // Reverse half; see the section comment. `incomingGradients` are the
+  // adjoints of the active results, in order. Sets `replays` when the reverse
+  // loop replays the body, which makes its loops checkpoint segments.
+  static LogicalResult
+  reverseTripCheckpointed(stablehlo::WhileOp orig, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils, ArrayRef<Value> caches,
+                          ArrayRef<bool> operandsActive,
+                          ArrayRef<Value> incomingGradients, bool &replays) {
+    Location loc = orig.getLoc();
+    Block *origBody = &orig.getBody().front();
+    size_t numArgs = origBody->getNumArguments();
+    SmallVector<Value> refs = getTripReplayRefs(orig);
+    assert(caches.size() == 1 + numArgs + refs.size() &&
+           "trip checkpoint cache layout mismatch");
+
+    int64_t budget = kDefaultTripCheckpointBudget;
+    if (auto period = getCheckpointBudget(orig)) {
+      if (*period < 1)
+        return orig->emitError()
+               << checkpointPeriodAttrName()
+               << " must be positive to checkpoint a loop whose trip count "
+                  "is data-dependent";
+      budget = *period;
+    }
+
+    Value numIters = gutils->popCache(caches[0], builder);
+    SmallVector<Value> init;
+    for (size_t i = 0; i < numArgs; ++i)
+      init.push_back(gutils->popCache(caches[1 + i], builder));
+    SmallVector<Value> refVals;
+    for (size_t i = 0; i < refs.size(); ++i)
+      refVals.push_back(gutils->popCache(caches[1 + numArgs + i], builder));
+    // The reverse rules of the replayed body read these through the mapping,
+    // and the forward values need not dominate the reverse loop (they do not
+    // when this loop sits in another loop's body). The caller restores the
+    // previous bindings (OutsideMappingsGuard).
+    for (auto [ref, val] : llvm::zip_equal(refs, refVals))
+      gutils->originalToNewFn.map(ref, val);
+
+    Type idxTy = getIndexLikeType(builder);
+    Value c0 = makeI64Constant(loc, builder, 0);
+    Value c1 = makeI64Constant(loc, builder, 1);
+
+    auto mapRefs = [&](IRMapping &mapping) {
+      for (auto [ref, val] : llvm::zip_equal(refs, refVals))
+        mapping.map(ref, val);
+    };
+
+    // Reverse loop over the N steps. It carries the adjoints, and the snapshot
+    // bookkeeping as well once the step turns out to read its state (below).
+    auto revOuter = createScaffoldForLoop(builder, loc, c0, numIters, c1,
+                                          incomingGradients);
+    SmallVector<Value> adjArgs(revOuter.args());
+
+    OpBuilder::InsertionGuard guard(builder);
+    setInsertionPointToBodyEnd(builder, revOuter.body);
+    // makeForLoop created the induction variable's increment ahead of the
+    // insertion point; the replay, if any, goes right after it.
+    Operation *ivUpdate =
+        findTerminator(revOuter.body)->getOperand(0).getDefiningOp();
+
+    // The adjoint of the step this iteration reverses, N - 1 - iv. x0 stands
+    // in for the state it starts from until the replay producing that state
+    // exists.
+    IRMapping mapping;
+    mapRefs(mapping);
+    for (auto [arg, val] : llvm::zip_equal(origBody->getArguments(), init))
+      mapping.map(arg, val);
+    copyBlockWithoutTerminator(builder, origBody, gutils, mapping);
+
+    primeStepGradients(builder, gutils, origBody, revOuter.body,
+                       operandsActive);
+
+    Operation *term = origBody->getTerminator();
+    unsigned revIdx = 0;
+    for (auto [active, operand] :
+         llvm::zip_equal(operandsActive, term->getOperands())) {
+      if (active) {
+        gutils->addToDiffe(operand, adjArgs[revIdx], builder);
+        revIdx++;
+      }
+    }
+
+    bool valid = true;
+    {
+      // The caches a body op's reverse rule asks for are per step: create them
+      // in this iteration, ahead of the replay.
+      SegmentCacheCreatorGuard cacheGuard(gutils, ivUpdate);
+      for (auto it = ++origBody->rbegin(), e = origBody->rend(); it != e; ++it)
+        valid &= gutils->Logic.visitChild(&*it, builder, gutils).succeeded();
+    }
+
+    SmallVector<Value> outerYields;
+    for (auto [active, arg] :
+         llvm::zip_equal(operandsActive, origBody->getArguments())) {
+      if (active) {
+        outerYields.push_back(gutils->diffe(arg, builder));
+        if (!gutils->isConstantValue(arg))
+          gutils->zeroDiffe(arg, builder);
+      }
+    }
+
+    // A step whose adjoint reads nothing of its state (the reverse rules of a
+    // slice or an add need no primal values) needs neither snapshots nor
+    // replays, and the reverse loop is the plain one of a counted loop.
+    if (isStepStateLive(revOuter.body, init)) {
+      replays = true;
+      assert(canReplay(orig) && "needsTripCheckpointing checked the carries");
+
+      builder.setInsertionPoint(revOuter.op);
+      // Never more snapshots than steps (see cacheBinomial).
+      Value budgetV = stablehlo::MinOp::create(
+          builder, loc, makeI64Constant(loc, builder, budget), numIters);
+      // One store per iteration argument plus the step each snapshot was
+      // taken at; slot 0 holds x0, taken at step 0.
+      SmallVector<Value> stores;
+      for (Value v : init)
+        stores.push_back(
+            storeSlot(builder, loc,
+                      createStore(builder, loc, budget, v.getType()), c0, v));
+      stores.push_back(createStore(builder, loc, budget, idxTy));
+      const size_t idxStore = numArgs;
+
+      // The loop now also carries (live snapshot count, stores...).
+      SmallVector<Value> bookkeeping{c1};
+      bookkeeping.append(stores.begin(), stores.end());
+      SmallVector<Value> carried = appendScaffoldCarries(revOuter, bookkeeping);
+      Value sp = carried[0];
+      SmallVector<Value> liveStores(std::next(carried.begin()), carried.end());
+
+      builder.setInsertionPointAfter(ivUpdate);
+      Value capo = stablehlo::SubtractOp::create(builder, loc, sp, c1);
+      // The step reversed in this iteration is currentRevStep - 1.
+      Value currentRevStep = stablehlo::SubtractOp::create(
+          builder, loc, numIters, revOuter.getIV());
+
+      SmallVector<Value> ckptState;
+      for (size_t i = 0; i < numArgs; ++i)
+        ckptState.push_back(loadSlot(builder, loc, liveStores[i], capo,
+                                     origBody->getArgument(i).getType()));
+      Value ckptStep =
+          loadSlot(builder, loc, liveStores[idxStore], capo, idxTy);
+
+      // Replay from the newest snapshot to step currentRevStep - 1, placing
+      // snapshots on the way. Carries (pos, next slot, state..., stores...).
+      SmallVector<Value> rematInit{ckptStep, capo};
+      rematInit.append(ckptState.begin(), ckptState.end());
+      rematInit.append(liveStores.begin(), liveStores.end());
+      auto remat = createScaffoldWhileLoop(
+          builder, loc, rematInit,
+          [&](OpBuilder &b, Location l, ValueRange args) {
+            Value posPlus1 = stablehlo::AddOp::create(b, l, args[0], c1);
+            return emitCmpLT(b, l, posPlus1, currentRevStep);
+          });
+      {
+        OpBuilder::InsertionGuard g(builder);
+        setInsertionPointToBodyEnd(builder, remat.body);
+        auto wargs = remat.args();
+        Value pos = wargs[0];
+        Value slot = wargs[1];
+        auto state = wargs.slice(2, numArgs);
+        SmallVector<Value> wStores(wargs.slice(2 + numArgs, stores.size()));
+
+        Value remaining =
+            stablehlo::SubtractOp::create(builder, loc, currentRevStep, pos);
+        Value budgetRem = stablehlo::MinOp::create(
+            builder, loc,
+            stablehlo::SubtractOp::create(builder, loc, budgetV, slot),
+            remaining);
+        Value split = enzyme::BinomialProgressOp::create(builder, loc, idxTy,
+                                                         remaining, budgetRem);
+
+        for (size_t i = 0; i < numArgs; ++i)
+          wStores[i] = storeSlot(builder, loc, wStores[i], slot, state[i]);
+        wStores[idxStore] =
+            storeSlot(builder, loc, wStores[idxStore], slot, pos);
+
+        // Advance `split` steps, or one fewer when that reaches the step being
+        // reversed: its state is what the step adjoint starts from.
+        Value posPlusSplit = stablehlo::AddOp::create(builder, loc, pos, split);
+        Value isLast = emitCmpEQ(builder, loc, posPlusSplit, currentRevStep);
+        Value rematUB = emitSelect(
+            builder, loc, isLast,
+            stablehlo::SubtractOp::create(builder, loc, posPlusSplit, c1),
+            posPlusSplit);
+
+        auto replay = createScaffoldForLoop(
+            builder, loc, pos, rematUB, c1,
+            SmallVector<Value>(state.begin(), state.end()));
+        {
+          OpBuilder::InsertionGuard g(builder);
+          setInsertionPointToBodyEnd(builder, replay.body);
+          IRMapping replayMapping;
+          mapRefs(replayMapping);
+          for (auto [arg, val] :
+               llvm::zip_equal(origBody->getArguments(), replay.args()))
+            replayMapping.map(arg, val);
+          copyBlockWithoutTerminator(builder, origBody, gutils, replayMapping);
+          SmallVector<Value> yields;
+          for (Value operand : term->getOperands())
+            yields.push_back(replayMapping.lookupOrDefault(operand));
+          finalizeScaffoldLoop(builder, loc, replay, yields);
+        }
+
+        SmallVector<Value> rematYields{
+            posPlusSplit, stablehlo::AddOp::create(builder, loc, slot, c1)};
+        auto replayed = replay.results();
+        rematYields.append(replayed.begin(), replayed.end());
+        rematYields.append(wStores.begin(), wStores.end());
+        finalizeScaffoldLoop(builder, loc, remat, rematYields);
+      }
+
+      // The step starts from the replayed state instead of x0.
+      auto rematResults = remat.results();
+      for (auto [x0, state] :
+           llvm::zip_equal(init, rematResults.slice(2, numArgs)))
+        x0.replaceUsesWithIf(state, [&](OpOperand &use) {
+          return revOuter.op->isProperAncestor(use.getOwner());
+        });
+
+      outerYields.push_back(rematResults[1]);
+      for (size_t i = 0; i < stores.size(); ++i)
+        outerYields.push_back(rematResults[2 + numArgs + i]);
+    }
+
+    setInsertionPointToBodyEnd(builder, revOuter.body);
+    finalizeScaffoldLoop(builder, loc, revOuter, outerYields);
+
+    builder.setInsertionPointAfter(revOuter.op);
+    auto outerResults = revOuter.results();
+    revIdx = 0;
+    for (auto [active, arg] :
+         llvm::zip_equal(operandsActive, orig->getOperands())) {
+      if (active) {
+        if (!gutils->isConstantValue(arg))
+          gutils->addToDiffe(arg, outerResults[revIdx], builder);
+        revIdx++;
+      }
+    }
+
+    return success(valid);
+  }
+
 private:
 public:
   LogicalResult createReverseModeAdjoint(Operation *orig, OpBuilder &builder,
@@ -1537,24 +2077,41 @@ public:
           !gutils->isConstantValue(orig->getResult(i));
     }
 
+    // A loop with a data-dependent trip count cached its own layout too (see
+    // cacheTripCheckpointed).
+    if (needsTripCheckpointing(whileOp)) {
+      OutsideMappingsGuard outsideMappings(whileOp, gutils);
+      SmallVector<Value> incomingGradients;
+      for (auto &&[active, res] :
+           llvm::zip_equal(operandsActive, orig->getResults())) {
+        if (active) {
+          incomingGradients.push_back(gutils->diffe(res, builder));
+          if (!gutils->isConstantValue(res))
+            gutils->zeroDiffe(res, builder);
+        }
+      }
+      // Only a reverse loop that replays the body is a checkpoint segment. One
+      // whose step reads no state is the plain reverse loop, and stays open to
+      // the rewrites that segments are protected from.
+      Operation *scope = builder.getInsertionBlock()->getParentOp();
+      LogicalResult result = failure();
+      markScaffoldLoops(scope, [&]() -> std::optional<LogicalResult> {
+        bool replays = false;
+        result =
+            reverseTripCheckpointed(whileOp, builder, gutils, caches,
+                                    operandsActive, incomingGradients, replays);
+        if (failed(result) || !replays)
+          return std::nullopt;
+        return result;
+      });
+      return result;
+    }
+
     // Checkpointing cached a layout of its own (see
     // LoopCheckpointing::cachePeriodic / cacheBinomial), so it has to be
     // dispatched before any of `caches` is read as a trip count below.
     if (needsCheckpointing(whileOp) || needsBinomialCheckpointing(whileOp)) {
-      SetVector<Value> outsideRefs;
-      getUsedValuesDefinedAbove(whileOp->getRegions(), outsideRefs);
-      SmallVector<std::pair<Value, Value>> savedOutsideMappings;
-      for (Value ref : outsideRefs)
-        savedOutsideMappings.emplace_back(
-            ref, gutils->originalToNewFn.lookupOrNull(ref));
-      auto restoreOutsideMappings = llvm::scope_exit([&] {
-        for (auto [ref, previous] : savedOutsideMappings) {
-          if (previous)
-            gutils->originalToNewFn.map(ref, previous);
-          else
-            gutils->originalToNewFn.erase(ref);
-        }
-      });
+      OutsideMappingsGuard outsideMappings(whileOp, gutils);
       // The shared code indexes iteration arguments without the induction
       // variable, which -- being an integer counter -- is never active.
       assert(!operandsActive[0] &&
@@ -1748,6 +2305,9 @@ public:
 
   SmallVector<Value> cacheValues(Operation *orig,
                                  MGradientUtilsReverse *gutils) const {
+    if (needsTripCheckpointing(cast<stablehlo::WhileOp>(orig)))
+      return cacheTripCheckpointed(cast<stablehlo::WhileOp>(orig), gutils);
+
     // The primal is augmented to store the number of iterations
     auto newWhile = cast<WhileOp>(gutils->getNewFromOriginal(orig));
     OpBuilder revBuilder(newWhile);
@@ -1757,7 +2317,7 @@ public:
     Value numIters;
 
     WhileLoopInfo info(cast<WhileOp>(orig));
-    if (info.computeInfo().succeeded()) {
+    if (info.computeInfo().succeeded() && hasIntegerInductionVariable(info)) {
       // no need to cache number of iterations if it is a known constant.
       if (info.isValid()) {
 
@@ -1787,64 +2347,14 @@ public:
         // Non-constant, non-binomial: fall through to numIters caching below.
       }
 
-      numIters = info.getNumIters(revBuilder, gutils->originalToNewFn);
+      // Otherwise the counter below counts the trips as they run.
+      if (hasCountedTrips(cast<stablehlo::WhileOp>(orig)))
+        numIters = info.getNumIters(revBuilder, gutils->originalToNewFn);
     }
 
-    if (!numIters) {
-      auto cond = &newWhile.getCond().front();
-      auto body = &newWhile.getBody().front();
-
-      auto unrankedTensorType = RankedTensorType::get({}, elementType);
-      auto numItersInit =
-          ConstantOp::create(
-              revBuilder, orig->getLoc(), unrankedTensorType,
-              SplatElementsAttr::get(
-                  unrankedTensorType,
-                  ArrayRef<Attribute>(IntegerAttr::get(elementType, 0))))
-              .getResult();
-
-      newWhile->insertOperands(newWhile->getNumOperands(),
-                               ValueRange(numItersInit));
-      cond->addArgument(numItersInit.getType(), orig->getLoc());
-      Value numItersInBlock =
-          body->addArgument(numItersInit.getType(), orig->getLoc());
-
-      OpBuilder inBodyBuilder(body, body->begin());
-      auto one = ConstantOp::create(
-          inBodyBuilder, orig->getLoc(), unrankedTensorType,
-          SplatElementsAttr::get(
-              unrankedTensorType,
-              ArrayRef<Attribute>(IntegerAttr::get(elementType, 1))));
-      numItersInBlock = AddOp::create(inBodyBuilder, orig->getLoc(),
-                                      numItersInBlock, one.getResult());
-      auto term = body->getTerminator();
-      term->insertOperands(term->getNumOperands(), ValueRange(numItersInBlock));
-
-      SmallVector<Type> resultTypes(newWhile->getResultTypes().begin(),
-                                    newWhile->getResultTypes().end());
-      resultTypes.push_back(numItersInit.getType());
-
-      auto newnewWhile = WhileOp::create(revBuilder, orig->getLoc(),
-                                         resultTypes, newWhile->getOperands());
-      copyLoopRetention(newWhile, newnewWhile);
-      // Adding a counter preserves the primal loop's iteration bound.
-      if (auto bound = orig->getAttrOfType<IntegerAttr>(maxTripCountAttr))
-        newnewWhile->setAttr(maxTripCountAttr, bound);
-      newnewWhile.getCond().takeBody(newWhile.getCond());
-      newnewWhile.getBody().takeBody(newWhile.getBody());
-
-      SmallVector<Value> newResults(newnewWhile->getResults().begin(),
-                                    --newnewWhile->getResults().end());
-
-      gutils->replaceOrigOpWith(orig, newResults);
-      gutils->erase(newWhile);
-      gutils->originalToNewFn.map(orig, newnewWhile.getOperation());
-
-      Value inductionOut =
-          newnewWhile->getResult(newnewWhile->getNumResults() - 1);
-      numIters = inductionOut;
-      newWhile = newnewWhile;
-    }
+    if (!numIters)
+      std::tie(newWhile, numIters) =
+          addTripCounter(orig, newWhile, elementType, gutils);
 
     revBuilder.setInsertionPointAfter(newWhile);
     Value numItersCache = gutils->initAndPushCache(numIters, revBuilder);
@@ -1878,7 +2388,9 @@ private:
     if (!lhsType)
       return builder.getI64Type();
 
-    return lhsType.getElementType();
+    // A trip counter counts in integers, whatever the condition compares.
+    Type elementType = lhsType.getElementType();
+    return elementType.isInteger() ? elementType : builder.getI64Type();
   }
 };
 

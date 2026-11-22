@@ -14,6 +14,11 @@
 // reverse loop's actual count. The second loop starts its counter from a traced
 // value, which nothing can bound, so it states the bound as
 // `enzymexla.max_trip_count`.
+//
+// By default such a loop is reversed by binomial checkpointing over the trip
+// count it ran instead (while_data_dependent_trip_count.mlir), which needs no
+// bound. `enzyme.enable_checkpointing = false` asks for the taped reverse
+// tested here.
 
 module {
   func.func private @early_exit(%x: tensor<2xf64>) -> tensor<f64> {
@@ -26,7 +31,7 @@ module {
     %ones = stablehlo.constant dense<1.000000e+00> : tensor<2xf64>
     %s = stablehlo.reduce(%x init: %zero) applies stablehlo.add across dimensions = [0] : (tensor<2xf64>, tensor<f64>) -> tensor<f64>
     %dt = stablehlo.multiply %s, %tenth : tensor<f64>
-    %r:3 = stablehlo.while(%i = %c0, %t = %zero, %acc = %ones) : tensor<i64>, tensor<f64>, tensor<2xf64> attributes {enzyme.disable_mincut}
+    %r:3 = stablehlo.while(%i = %c0, %t = %zero, %acc = %ones) : tensor<i64>, tensor<f64>, tensor<2xf64> attributes {enzyme.disable_mincut, enzyme.enable_checkpointing = false}
     cond {
       %a = stablehlo.compare LT, %i, %c8 : (tensor<i64>, tensor<i64>) -> tensor<i1>
       %b = stablehlo.compare LT, %t, %one : (tensor<f64>, tensor<f64>) -> tensor<i1>
@@ -53,7 +58,7 @@ module {
     %ones = stablehlo.constant dense<1.000000e+00> : tensor<2xf64>
     %s = stablehlo.reduce(%x init: %zero) applies stablehlo.add across dimensions = [0] : (tensor<2xf64>, tensor<f64>) -> tensor<f64>
     %dt = stablehlo.multiply %s, %tenth : tensor<f64>
-    %r:3 = stablehlo.while(%i = %start, %t = %zero, %acc = %ones) : tensor<i64>, tensor<f64>, tensor<2xf64> attributes {enzyme.disable_mincut, enzymexla.max_trip_count = 8 : i64}
+    %r:3 = stablehlo.while(%i = %start, %t = %zero, %acc = %ones) : tensor<i64>, tensor<f64>, tensor<2xf64> attributes {enzyme.disable_mincut, enzyme.enable_checkpointing = false, enzymexla.max_trip_count = 8 : i64}
     cond {
       %a = stablehlo.compare LT, %i, %c8 : (tensor<i64>, tensor<i64>) -> tensor<i1>
       %b = stablehlo.compare LT, %t, %one : (tensor<f64>, tensor<f64>) -> tensor<i1>
@@ -80,7 +85,7 @@ module {
     // The integer conjunct limits this loop to eight iterations.
     %start = stablehlo.constant dense<9.007199254740992E15> : tensor<f64>
     %limit = stablehlo.constant dense<9.007199254740994E15> : tensor<f64>
-    %r:3 = stablehlo.while(%i = %c0, %t = %start, %acc = %ones) : tensor<i64>, tensor<f64>, tensor<2xf64> attributes {enzyme.disable_mincut}
+    %r:3 = stablehlo.while(%i = %c0, %t = %start, %acc = %ones) : tensor<i64>, tensor<f64>, tensor<2xf64> attributes {enzyme.disable_mincut, enzyme.enable_checkpointing = false}
     cond {
       %a = stablehlo.compare LT, %i, %c8 : (tensor<i64>, tensor<i64>) -> tensor<i1>
       %b = stablehlo.compare LT, %t, %limit : (tensor<f64>, tensor<f64>) -> tensor<i1>
