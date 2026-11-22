@@ -199,7 +199,7 @@ def optimization_passes(
 def full_optimization_pass_pipeline(**kwargs):
     opt_passes = optimization_passes(**kwargs)
 
-    enzyme_pass = 'enzyme{postpasses="arith-raise{stablehlo=true},enzyme-batch-to-stablehlo,canonicalize,cse,canonicalize,remove-unnecessary-enzyme-ops,enzyme-simplify-math,canonicalize,cse,canonicalize"}'
+    enzyme_pass = 'enzyme{postpasses="arith-raise{stablehlo=true},enzyme-batch-to-stablehlo,canonicalize,cse,canonicalize,remove-unnecessary-enzyme-ops,lower-enzymexla-math,enzyme-simplify-math,canonicalize,cse,canonicalize"}'
 
     propagate_down_passes = ""
     if (
@@ -1502,7 +1502,7 @@ def enzyme_vjp(shadow_rets, *prim_args, **kwargs):
         newpasses = (
             prev_passes
             + ad_pass
-            + ",arith-raise{stablehlo=true},enzyme-batch-to-stablehlo,canonicalize, remove-unnecessary-enzyme-ops, enzyme-simplify-math, "
+            + ",arith-raise{stablehlo=true},enzyme-batch-to-stablehlo,canonicalize, remove-unnecessary-enzyme-ops, lower-enzymexla-math, enzyme-simplify-math, "
             + optimization_passes()
             + ", canonicalize, cse"
             + post_passes
