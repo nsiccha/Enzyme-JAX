@@ -335,12 +335,13 @@ module {
 // CHECK-LABEL: func.func private @diffegeometric_budget1(
 // CHECK:         stablehlo.while({{.*}}) : tensor<i64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<1xf64>, tensor<1xf64>, tensor<1xi64>, tensor<f64>{{$}}
 
-// Nothing is sized by the counter's bound of 100 trips.
+// Nothing is sized by the counter's bound of 100 trips. (`{{ }}return` is the
+// function's return: a bare `return` would stop at the first stablehlo.return.)
 // CHECK-LABEL: func.func private @diffeearly_exit(
 // CHECK-NOT:     100x
 // CHECK:         stablehlo.while({{.*}}) : tensor<i64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<32xi64>, tensor<32xf64>, tensor<32xf64>, tensor<32xi64>, tensor<f64>{{$}}
 // CHECK-NOT:     100x
-// CHECK:         return
+// CHECK:         {{ }}return
 
 // The counted outer loop tapes, per outer trip, what the inner reverse starts
 // from: the inner trip count and initial carry.
@@ -364,7 +365,7 @@ module {
 // CHECK-NEXT:    cond {
 // CHECK-NEXT:      stablehlo.compare LT, %{{.+}}, %[[FWD]]#1
 // CHECK-NOT:     {{binomial_progress|checkpoint_segment|tensor<[0-9]+x}}
-// CHECK:         return
+// CHECK:         {{ }}return
 
 // A dynamic step does not count the loop.
 // CHECK-LABEL: func.func private @diffestrided(
