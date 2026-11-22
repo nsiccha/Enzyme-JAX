@@ -3,14 +3,14 @@
   "line": {
     "repo": "nsiccha/Enzyme-JAX",
     "ref": "dogfood",
-    "sha": "050e7e59da4d1a55008c57fd69c5b6680638cc88"
+    "sha": "90f3d7c1ae3508ccb102077cab23436456976943"
   },
   "upstream": {
     "repo": "EnzymeAD/Enzyme-JAX",
     "ref": "main",
     "sha": "c2e34d38ca69f075bef87d4289bb2de8c867ad25"
   },
-  "prepared_at": "2026-11-22T05:46:04+00:00",
+  "prepared_at": "2026-11-22T09:30:20+00:00",
   "problems": [
     {
       "id": "triangular-solve-ad",
@@ -148,6 +148,24 @@
             "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-adjoint.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -252,6 +270,16 @@
             "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/cholesky.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -340,6 +368,15 @@
             "test/lit_tests/diffrules/enzymexla/lu.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/lu.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -453,6 +490,15 @@
             "test/lit_tests/diffrules/enzymexla/svd.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/enzymexla/svd.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ],
       "draft": {
@@ -544,6 +590,16 @@
             "test/lit_tests/convertconvert_float.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/convertconvert.mlir",
+            "test/lit_tests/convertconvert_float.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -624,6 +680,15 @@
             "test/lit_tests/diffrules/stablehlo/abs.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/abs.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -707,6 +772,16 @@
             "test/lit_tests/diffrules/stablehlo/reduce_mul_complex.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/reduce_mul.mlir",
+            "test/lit_tests/diffrules/stablehlo/reduce_mul_complex.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -822,6 +897,15 @@
             "test/lit_tests/linalg/lapack/getrf_tall.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -954,6 +1038,15 @@
             "test/lit_tests/reducepad.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/reducepad.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -1033,6 +1126,16 @@
             "test/lit_tests/reshapedynamicslice.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/reshapedus_unchanged.mlir",
+            "test/lit_tests/reshapedynamicslice.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -1125,6 +1228,19 @@
             "test/lit_tests/while_pad_induction_reduction.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/autobatching/loop_to_reduce.mlir",
+            "test/lit_tests/dotsimplify.mlir",
+            "test/lit_tests/exponential_minus_one_simplify.mlir",
+            "test/lit_tests/selfsubtract.mlir",
+            "test/lit_tests/while_pad_induction_reduction.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -1205,6 +1321,15 @@
             "test/lit_tests/linalg/lapack/gesdd_complex.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/linalg/lapack/gesdd_complex.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -1255,6 +1380,15 @@
             "test/lit_tests/slicedotgeneral_strided_extents.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/slicedotgeneral_strided_extents.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ],
       "requires": [],
@@ -1366,6 +1500,20 @@
             "test/lit_tests/while_repeated_induction_reduction.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/checkpoint_requested_parallel.mlir",
+            "test/lit_tests/checkpoint_requested_unroll.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_checkpointing_replayed_capture.mlir",
+            "test/lit_tests/if.mlir",
+            "test/lit_tests/slice_if_result_dominance.mlir",
+            "test/lit_tests/while_repeated_induction_reduction.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ],
       "requires": [],
@@ -1423,6 +1571,15 @@
             "test/lit_tests/while_affine_index_nested_loop.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/while_affine_index_nested_loop.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ],
       "requires": [],
@@ -1596,6 +1753,23 @@
             "test/lit_tests/preserve_loop_licm.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/batchtests/custom_call.mlir",
+            "test/lit_tests/batchtests/pad.mlir",
+            "test/lit_tests/batchtests/preserve_loop.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_preserve_loop.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_singleton_tensor_cache.mlir",
+            "test/lit_tests/preserve_control_flow_export.mlir",
+            "test/lit_tests/preserve_loop.mlir",
+            "test/lit_tests/preserve_loop_bounds.mlir",
+            "test/lit_tests/preserve_loop_licm.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ],
       "requires": [],
@@ -1693,6 +1867,16 @@
             "test/lit_tests/preserve_reduction_export.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/preserve_gather_order.mlir",
+            "test/lit_tests/preserve_reduction_export.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ],
       "requires": [],
@@ -1768,6 +1952,15 @@
             "test/lit_tests/while_early_exit_cache.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/while_early_exit_cache.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ],
       "requires": [],
@@ -1869,6 +2062,19 @@
             "test/lit_tests/while_if_nested_removal.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/case.mlir",
+            "test/lit_tests/diffrules/stablehlo/case_remove.mlir",
+            "test/lit_tests/diffrules/stablehlo/if.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_nested_if_adjoint.mlir",
+            "test/lit_tests/while_if_nested_removal.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ],
       "requires": [],
@@ -1940,6 +2146,15 @@
             "test/lit_tests/linalg/lapack/getrf_tall.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/linalg/lapack/getrf_tall.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -1988,6 +2203,24 @@
             "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-adjoint.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-complex-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-left-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-lower.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve-real-right-upper.mlir",
+            "test/lit_tests/diffrules/stablehlo/triangular_solve.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     },
@@ -2033,6 +2266,61 @@
             "test/lit_tests/while_early_exit_cache.mlir"
           ],
           "native_build": "20305c32c0a69fa819ce9af8261c6892db061c12a5edce69853c38fcea340547"
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/while2.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_data_dependent_trip_count.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_data_dependent_trip_count_effects.mlir",
+            "test/lit_tests/while_early_exit_cache.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
+        }
+      ]
+    },
+    {
+      "id": "while-reverse-trip-count",
+      "role": "fix",
+      "title": "Reverse mode can run too few iterations of a while loop",
+      "summary": "When the reverse pass undercounts loop iterations, it drops gradient contributions. Floating-point counters need the number of trips actually taken. For an increasing integer counter, the last partial stride contributes one trip, and a loop that never enters contributes zero.",
+      "fix": {
+        "branch": "dogfood",
+        "commits": [
+          {
+            "sha": "b7e032ddec4e0c2122704372f0dd1b677113d700",
+            "original": [
+              "b7e032ddec4e0c2122704372f0dd1b677113d700"
+            ],
+            "title": "WhileLoopInfo: count only integer loops, round a runtime trip count up"
+          }
+        ]
+      },
+      "draft": {
+        "title": "Reverse differentiation undercounts some StableHLO while loops",
+        "body": "Start a floating-point accumulator at zero and repeatedly add a = 0.5 while it is below 2.4. The forward loop executes five additions. At that input its derivative with respect to a should be 5, but reverse mode returns 4. Integer loops also lose the last iteration when a runtime bound is between strides. For example, a loop starting at zero with step 2 and bound 5 visits 0, 2 and 4. The derivative of an accumulator that adds a once per trip should be 3. The regression also covers an empty interval and a floating-point counter whose repeated additions round."
+      },
+      "validation": [
+        {
+          "base": "b933d2ec9957c870ea152d16ec0cc48b208a9964",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/while_trip_count.mlir"
+          ],
+          "result": "passed",
+          "detail": "The interpreter on the isolated trip-count fix b7e032dd matched the expected gradients exactly for both floating-point examples and both non-unit integer strides. The preceding compiler returned 4, 10, 2 and 2 where the expected counts were 5, 11, 3 and 3."
+        },
+        {
+          "base": "c2e34d38ca69f075bef87d4289bb2de8c867ad25",
+          "result": "passed",
+          "detail": "LLVM 24 CPU optimizer built from Enzyme-JAX 90f3d7c1ae3508ccb102077cab23436456976943 and Enzyme 09f4483f63f8a730e227e25040f425c9252bfbd5. The listed fixtures recorded PASS.",
+          "tests": [
+            "test/lit_tests/diffrules/stablehlo/while_checkpointing_binomial_nested_full.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_dyn.mlir",
+            "test/lit_tests/diffrules/stablehlo/while_trip_count.mlir"
+          ],
+          "native_build": "f5b14e4e2f22c6d05ef9ee80a64712a4f88f03cebb8c84b9ee3e5ce32389b954"
         }
       ]
     }
