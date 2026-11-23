@@ -93,6 +93,12 @@ py_test(
 )
 
 py_test(
+    name = "test_hlo_enzyme_dialect",
+    srcs = ["test_hlo_enzyme_dialect.py"],
+    deps = TEST_DEPS,
+)
+
+py_test(
     name = "test_hlo_product",
     srcs = ["test_hlo_product.py"],
     deps = TEST_DEPS,
