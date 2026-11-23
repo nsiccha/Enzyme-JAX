@@ -1,6 +1,6 @@
 """JAX primitives for Enzyme connection."""
 
-from functools import cache, partial
+from functools import cache, lru_cache, partial
 from math import prod
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -481,6 +481,61 @@ def _check_local_hlo(module):
         )
 
 
+# Imported HLO may use Enzyme's own dialect. Its differentiation ops
+# (enzyme.fwddiff, enzyme.autodiff) become ordinary functions before any AD
+# that JAX requests wraps the module. enzyme.ignore_derivatives has to stay
+# visible to that AD, so it is removed only at the end of the pipeline.
+_HLO_ENZYME_BEFORE = (
+    'enzyme{postpasses="arith-raise{stablehlo=true},'
+    'enzyme-batch-to-stablehlo,canonicalize"}'
+)
+_HLO_ENZYME_AFTER = "remove-unnecessary-enzyme-ops"
+
+
+def _parse_imported_hlo(source):
+    """Parse imported HLO in the current JAX context, to inspect it.
+
+    JAX's context does not register Enzyme's dialect. Enzyme operations in
+    generic form parse as unregistered operations. Their custom assembly parses
+    only in Enzyme's own context, so inspect a lowered copy instead: lowering
+    keeps every function's signature.
+    """
+    ir.Context.current.allow_unregistered_dialects = True
+    try:
+        return ir.Module.parse(source)
+    except ir.MLIRError as error:
+        try:
+            _, lowered = enzyme_call.run_pass_pipeline(
+                [], source, _HLO_ENZYME_BEFORE + "," + _HLO_ENZYME_AFTER
+            )
+        except ValueError:
+            raise error from None
+        return ir.Module.parse(lowered)
+
+
+@lru_cache(maxsize=128)
+def _uses_enzyme_dialect(source):
+    """Whether imported HLO contains an operation of Enzyme's dialect."""
+    if "enzyme." not in source:
+        return False
+    with jax_mlir.make_ir_context() as context:
+        context.allow_unregistered_dialects = True
+        try:
+            module = ir.Module.parse(source)
+        except ir.MLIRError:
+            # Only Enzyme's context parses its custom assembly.
+            return True
+        return any(op.name.startswith("enzyme.") for op in _walk(module.operation))
+
+
+def _with_enzyme_lowering(source, pipeline, after=True):
+    """Lower the Enzyme operations of imported HLO around `pipeline`."""
+    if not (isinstance(source, str) and _uses_enzyme_dialect(source)):
+        return pipeline
+    passes = [_HLO_ENZYME_BEFORE] + ([pipeline] if pipeline else [])
+    return ",".join(passes + ([_HLO_ENZYME_AFTER] if after else []))
+
+
 def _enzyme_primal_abstract_eval(
     *args_flat: jax.core.ShapedArray,
     source,
@@ -807,6 +862,7 @@ def _enzyme_primal_lowering(
                 run_pipeline = "lower-chlo-gamma-f32"
 
             run_pipeline += ",func.func(stablehlo-legalize-composite-to-call)"
+            run_pipeline = _with_enzyme_lowering(mfunc, run_pipeline)
             try:
                 name, nmod = enzyme_call.run_pass_pipeline(fns, source, run_pipeline)
             except Exception as e:
@@ -1212,7 +1268,7 @@ def ffi_call(
         and get_abstract_mesh().manual_axes
     ):
         with jax_mlir.make_ir_context():
-            _check_local_hlo(ir.Module.parse(source[3]))
+            _check_local_hlo(_parse_imported_hlo(source[3]))
     args = core.auto_insert_reshard(*args)
     return _enzyme_primal_p.bind(
         *args,
@@ -1700,7 +1756,7 @@ def hlo_call(
     source = recognize_linalg(source)
     fn = "main"
     with jax_mlir.make_ir_context():
-        nmod = ir.Module.parse(source)
+        nmod = _parse_imported_hlo(source)
         if not passes and any(
             (
                 op.name == "func.func"
@@ -1876,7 +1932,12 @@ def _enzyme_batch(primitive, args, axes, **params):
         pending_ad = pipeline.ad_level() != 0
         source = batch_hlo(
             params["source"][3],
-            "" if pending_ad else pipeline.pass_pipeline(),
+            # Enzyme's differentiation ops are lowered before batching.
+            _with_enzyme_lowering(
+                params["source"][3],
+                "" if pending_ad else pipeline.pass_pipeline(),
+                after=False,
+            ),
             size,
             # Batching exposes new broadcast, gather, and reduction patterns.
             post_pipeline=optimization_passes(enable_loop_raising_passes=False),
@@ -2183,7 +2244,7 @@ def primal_partial_eval(trace, *args, **kwargs):
         split = linearize_hlo(
             mfunc,
             tuple(act == "enzyme_dup" for act in acts),
-            passes[:start].rstrip(","),
+            _with_enzyme_lowering(mfunc, passes[:start].rstrip(","), after=False),
             passes[end + 1 :].lstrip(","),
         )
         if split is not None:

@@ -346,7 +346,9 @@ def recognize_linalg(source):
         for prefix in (_PREFIX, _LOGABSDET_PREFIX, _DET_PREFIX, _EIGH_PREFIX)
     ):
         return source
-    with mlir.make_ir_context(), ir.Location.unknown():
+    with mlir.make_ir_context() as context, ir.Location.unknown():
+        # Enzyme operations in generic form pass through unchanged.
+        context.allow_unregistered_dialects = True
         module = ir.Module.parse(source)
         functions = {
             f.name.value: f
