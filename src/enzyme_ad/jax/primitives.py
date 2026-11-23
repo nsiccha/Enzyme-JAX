@@ -1,6 +1,6 @@
 """JAX primitives for Enzyme connection."""
 
-from functools import partial
+from functools import lru_cache, partial
 from collections.abc import Callable, Sequence
 from typing import Any
 import inspect
@@ -286,6 +286,69 @@ def optimize_module(mod, pipeline=None):
         pipeline = full_optimization_pass_pipeline()
     enzyme_call.optimize_module(mod, pipeline)
     return
+
+
+# Imported HLO may use Enzyme's own dialect. Its differentiation ops
+# (enzyme.fwddiff, enzyme.autodiff) become ordinary functions before any AD
+# that JAX requests wraps the module. enzyme.ignore_derivatives has to stay
+# visible to that AD, so it is removed only at the end of the pipeline.
+_HLO_ENZYME_BEFORE = (
+    'enzyme{postpasses="arith-raise{stablehlo=true},'
+    'enzyme-batch-to-stablehlo,canonicalize"}'
+)
+_HLO_ENZYME_AFTER = "remove-unnecessary-enzyme-ops"
+
+
+def _parse_imported_hlo(source):
+    """Parse imported HLO in the current JAX context, to inspect it.
+
+    JAX's context does not register Enzyme's dialect. Enzyme operations in
+    generic form parse as unregistered operations. Their custom assembly parses
+    only in Enzyme's own context, so inspect a lowered copy instead: lowering
+    keeps every function's signature.
+    """
+    ir.Context.current.allow_unregistered_dialects = True
+    try:
+        return ir.Module.parse(source)
+    except ir.MLIRError as error:
+        try:
+            _, lowered = enzyme_call.run_pass_pipeline(
+                [], source, _HLO_ENZYME_BEFORE + "," + _HLO_ENZYME_AFTER
+            )
+        except ValueError:
+            raise error from None
+        return ir.Module.parse(lowered)
+
+
+def _walk(op):
+    yield op
+    for region in op.regions:
+        for block in region.blocks:
+            for child in block.operations:
+                yield from _walk(child.operation)
+
+
+@lru_cache(maxsize=128)
+def _uses_enzyme_dialect(source):
+    """Whether imported HLO contains an operation of Enzyme's dialect."""
+    if "enzyme." not in source:
+        return False
+    with jax_mlir.make_ir_context() as context:
+        context.allow_unregistered_dialects = True
+        try:
+            module = ir.Module.parse(source)
+        except ir.MLIRError:
+            # Only Enzyme's context parses its custom assembly.
+            return True
+        return any(op.name.startswith("enzyme.") for op in _walk(module.operation))
+
+
+def _with_enzyme_lowering(source, pipeline):
+    """Lower the Enzyme operations of imported HLO around `pipeline`."""
+    if not (isinstance(source, str) and _uses_enzyme_dialect(source)):
+        return pipeline
+    passes = [_HLO_ENZYME_BEFORE] + ([pipeline] if pipeline else [])
+    return ",".join(passes + [_HLO_ENZYME_AFTER])
 
 
 def _enzyme_primal_impl(
@@ -658,6 +721,7 @@ def _enzyme_primal_lowering(
                 pass_pipeline = (
                     pass_pipeline + ",tensor-empty-raise,drop-unsupported-attributes"
                 )
+            pass_pipeline = _with_enzyme_lowering(mfunc, pass_pipeline)
 
             try:
                 name, nmod = enzyme_call.run_pass_pipeline(fns, source, pass_pipeline)
@@ -1083,7 +1147,7 @@ def hlo_call(
 ):
     fn = "main"
     with jax_mlir.make_ir_context():
-        nmod = ir.Module.parse(source)
+        nmod = _parse_imported_hlo(source)
         func = None
         names = []
         for f in nmod.body:
