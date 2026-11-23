@@ -13,6 +13,8 @@ from enzyme_ad.jax._hlo_solve import recognize_linalg
 jax.config.update("jax_enable_x64", True)
 
 RECOGNISED = "__enzyme_linalg_eigh_v1_{precision}_cpu_n{n}"
+# kTieTolerance in CompositeEighDerivative, relative to the largest |eigenvalue|.
+TIE_TOLERANCE = 1e-10
 
 
 def jacobi(a, sweeps):
@@ -91,6 +93,15 @@ def projected_score(weight):
     # sum_k exp(-w_k) v_k^T B v_k = tr(exp(-A) B): independent of the sign of
     # each eigenvector, so the gradient is defined for distinct eigenvalues.
     return lambda w, v: jnp.sum(jnp.exp(-w) * jnp.einsum("ik,ij,jk->k", v, weight, v))
+
+
+def adjoint(w, v, wbar, vbar):
+    """The rule's Abar, with eigenvalues closer than the tolerance tied."""
+    gap = w[None, :] - w[:, None]
+    tied = np.abs(gap) <= TIE_TOLERANCE * np.max(np.abs(w))
+    f = np.where(tied, 0.0, 1.0 / np.where(tied, 1.0, gap))
+    a = v @ (np.diag(wbar) + f * (v.T @ vbar)) @ v.T
+    return (a + a.T) / 2
 
 
 class EighCompositeTest(parameterized.TestCase):
@@ -225,6 +236,64 @@ class EighCompositeTest(parameterized.TestCase):
         direction = np.ones((n, n))
         tangent = jax.jit(lambda a, d: jax.jvp(function, (a,), (d,))[1])(a, direction)
         np.testing.assert_allclose(tangent, np.sum(np.cos(np.diag(a))), rtol=1e-12)
+
+    @parameterized.named_parameters(("tied", 1e-12, True), ("distinct", 1e-6, False))
+    def test_eigenvalues_closer_than_the_tolerance_are_tied(self, gap, tied):
+        n = 3
+        rng = np.random.default_rng(11)
+        q, _ = np.linalg.qr(rng.standard_normal((n, n)))
+        a = (q * np.array([1.0, 1.0 + gap, 3.0])) @ q.T
+        a = (a + a.T) / 2
+        weight = jnp.asarray(symmetric(rng, n, np.float64))
+        score = projected_score(weight)
+        source = source_for(n, np.float64, RECOGNISED.format(precision="f64", n=n))
+        w, v, _ = jax.jit(lambda a: hlo_call(a, source=source))(a)
+        w, v = np.asarray(w), np.asarray(v)
+        self.assertEqual(abs(w[1] - w[0]) <= TIE_TOLERANCE * np.max(np.abs(w)), tied)
+        wbar, vbar = jax.grad(score, argnums=(0, 1))(w, v)
+        gradient = jax.jit(jax.grad(lambda a: score(*hlo_call(a, source=source)[:2])))(
+            a
+        )
+        expected = adjoint(w, v, np.asarray(wbar), np.asarray(vbar))
+        scale = np.max(np.abs(expected))
+        np.testing.assert_allclose(gradient, expected, rtol=0, atol=1e-8 * scale)
+        if not tied:
+            # A distinct pair keeps the coupling term of tr(exp(-A) B).
+            oracle = jax.grad(lambda a: jnp.trace(jax.scipy.linalg.expm(-a) @ weight))(
+                a
+            )
+            oracle = (oracle + oracle.T) / 2
+            np.testing.assert_allclose(gradient, oracle, rtol=0, atol=1e-8 * scale)
+
+    def test_clustered_spectrum_keeps_kernel_parameter_gradients(self):
+        # An RBF kernel on a grid has most of its eigenvalues within rounding
+        # of zero, so their computed gaps (about 1e-18 here) are noise. The
+        # gradient of a Gaussian process log density in the kernel parameters
+        # still matches the dense formulation, which uses no eigh.
+        n, noise = 30, 0.1
+        x = jnp.linspace(0.0, 1.0, n)
+        y = jnp.asarray(np.random.default_rng(5).standard_normal(n))
+        source = source_for(n, np.float64, RECOGNISED.format(precision="f64", n=n))
+
+        def kernel(theta):
+            distance = (x[:, None] - x[None, :]) / jnp.exp(theta[1])
+            return jnp.exp(theta[0]) * jnp.exp(-0.5 * distance**2)
+
+        def spectral(theta):
+            w, v = hlo_call(kernel(theta), source=source)[:2]
+            return -0.5 * jnp.sum((v.T @ y) ** 2 / (w + noise)) - 0.5 * jnp.sum(
+                jnp.log(w + noise)
+            )
+
+        def dense(theta):
+            c = kernel(theta) + noise * jnp.eye(n)
+            return -0.5 * y @ jnp.linalg.solve(c, y) - 0.5 * jnp.linalg.slogdet(c)[1]
+
+        # Log variance 0 and log lengthscale 0.
+        theta = jnp.zeros(2)
+        np.testing.assert_allclose(
+            jax.jit(jax.grad(spectral))(theta), jax.grad(dense)(theta), rtol=1e-4
+        )
 
 
 if __name__ == "__main__":

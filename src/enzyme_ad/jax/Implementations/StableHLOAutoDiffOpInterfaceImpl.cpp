@@ -3845,9 +3845,18 @@ public:
 // the derivative of a symmetric function of the eigenvalues, such as
 // sum_k g(w_k), finite and exact. A score that also reads the eigenvectors
 // gets no term coupling the tied pair; for tr(f(A) B) that term is
-// f'(w) (V^T B V)_ij. Near a tie, F o (V^T Vbar) divides the rounding error of
-// V^T Vbar by the gap.
+// f'(w) (V^T B V)_ij.
+//
+// Near a tie, F o (V^T Vbar) divides the rounding error of V^T Vbar by the
+// gap. Smooth kernels have many eigenvalues within rounding of zero, and their
+// computed gaps are noise (1e-18 at n = 30), so the rule treats eigenvalues
+// closer than kTieTolerance * max_k |w_k| as tied. That keeps the gradient of a
+// Gaussian process log density in its kernel parameters near the exact one,
+// and drops the eigenvector coupling of distinct eigenvalues that close.
 class CompositeEighDerivative {
+  // Relative to the largest |eigenvalue| of each matrix.
+  static constexpr double kTieTolerance = 1e-10;
+
   CompositeOp op;
   OpBuilder &builder;
   Location loc;
@@ -3910,14 +3919,47 @@ public:
     return CompareOp::create(builder, loc, rows, cols, ComparisonDirection::EQ);
   }
 
-  // F_ij = 1 / (w_j - w_i), zero where w_i == w_j (the diagonal included).
+  // max_k |w_k| of each matrix, broadcast over the matrix.
+  Value spectralRadius(Value w) {
+    auto type = matrixType();
+    auto scalar = RankedTensorType::get({}, type.getElementType());
+    auto radiusType = RankedTensorType::get(type.getShape().drop_back(2),
+                                            type.getElementType());
+    Value magnitude = AbsOp::create(builder, loc, w);
+    auto reduce = ReduceOp::create(builder, loc, TypeRange{radiusType},
+                                   ValueRange{magnitude},
+                                   ValueRange{makeZero(builder, loc, scalar)},
+                                   ArrayRef<int64_t>{type.getRank() - 2});
+    Block *body = new Block();
+    reduce.getBody().push_back(body);
+    body->addArguments({scalar, scalar}, {loc, loc});
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToEnd(body);
+      ReturnOp::create(builder, loc,
+                       MaxOp::create(builder, loc, body->getArgument(0),
+                                     body->getArgument(1))
+                           .getResult());
+    }
+    SmallVector<int64_t> axes;
+    for (int64_t i = 0; i < type.getRank() - 2; ++i)
+      axes.push_back(i);
+    return BroadcastInDimOp::create(builder, loc, type, reduce->getResult(0),
+                                    builder.getDenseI64ArrayAttr(axes));
+  }
+
+  // F_ij = 1 / (w_j - w_i), zero where w_i and w_j are tied (the diagonal
+  // included).
   Value gapInverse(Value w) {
     auto type = matrixType();
     Value gap =
         SubtractOp::create(builder, loc, spread(w, false), spread(w, true));
     Value zero = makeZero(builder, loc, type);
+    Value bound = MulOp::create(builder, loc, spectralRadius(w),
+                                constant(kTieTolerance, type));
     Value tie =
-        CompareOp::create(builder, loc, gap, zero, ComparisonDirection::EQ);
+        CompareOp::create(builder, loc, AbsOp::create(builder, loc, gap), bound,
+                          ComparisonDirection::LE);
     Value safe = SelectOp::create(builder, loc, tie, constant(1, type), gap);
     Value inverse = DivOp::create(builder, loc, constant(1, type), safe);
     return SelectOp::create(builder, loc, tie, zero, inverse);
