@@ -11,6 +11,8 @@ jax.config.update("jax_enable_x64", True)
 
 DUP = "#enzyme.activity<enzyme_dup>"
 DUPNONEED = "#enzyme.activity<enzyme_dupnoneed>"
+ACTIVE = "#enzyme.activity<enzyme_active>"
+ACTIVENONEED = "#enzyme.activity<enzyme_activenoneed>"
 
 
 def ignore(value, generic):
@@ -21,16 +23,20 @@ def ignore(value, generic):
     return f"enzyme.ignore_derivatives {value} : tensor<f64> -> tensor<f64>"
 
 
-def fwddiff(fn, operands, types, result, generic, width=None):
-    properties = f"activity=[{DUP}], ret_activity=[{DUPNONEED}]"
+def fwddiff(fn, operands, types, result, generic, width=None, op="fwddiff"):
+    # An enzyme.fwddiff call, or an enzyme.autodiff call with op="autodiff".
+    activity, ret_activity = (
+        (DUP, DUPNONEED) if op == "fwddiff" else (ACTIVE, ACTIVENONEED)
+    )
+    properties = f"activity=[{activity}], ret_activity=[{ret_activity}]"
     if width is not None:
         properties += f", width = {width} : i64"
     if generic:
         return (
-            f'"enzyme.fwddiff"({operands}) <{{fn = @{fn}, {properties}}}> '
+            f'"enzyme.{op}"({operands}) <{{fn = @{fn}, {properties}}}> '
             f": ({types}) -> {result}"
         )
-    return f"enzyme.fwddiff @{fn}({operands}) <{{{properties}}}> : ({types}) -> {result}"
+    return f"enzyme.{op} @{fn}({operands}) <{{{properties}}}> : ({types}) -> {result}"
 
 
 CUBE = """
@@ -106,6 +112,78 @@ def batched_derivative(generic):
     return %s : tensor<f64>
   }}
 }}"""
+
+
+def tensor_type(shape):
+    return "tensor<" + "".join(f"{n}x" for n in shape) + "f64>"
+
+
+def batched_module(body, shape, out_shape, width, generic, op):
+    # @main(y, seed) returns `width` derivatives of @f at y, one per row of
+    # seed: JVPs (op = "fwddiff", seed of y's shape) or VJPs (op =
+    # "autodiff", seed of the result's shape).
+    y_t, out_t = tensor_type(shape), tensor_type(out_shape)
+    if op == "fwddiff":
+        seed_shape, result_shape = shape, out_shape
+    else:
+        seed_shape, result_shape = out_shape, shape
+    seed_t = tensor_type((width,) + seed_shape)
+    result_t = tensor_type((width,) + result_shape)
+    call = fwddiff(
+        "f", "%y, %seed", f"{y_t}, {seed_t}", result_t, generic, width, op
+    )
+    return f"""module {{
+  func.func private @f(%y: {y_t}) -> {out_t} {{
+    {body}
+    return %r : {out_t}
+  }}
+  func.func @main(%y: {y_t}, %seed: {seed_t}) -> {result_t} {{
+    %j = {call}
+    return %j : {result_t}
+  }}
+}}"""
+
+
+BATCHED_LAYOUT_CASES = (
+    # name, body of @f(%y) -> %r, operand shape, result shape, JAX reference,
+    # derivative ops to check
+    (
+        "reverse dims=[1]",
+        "%r = stablehlo.reverse %y, dims = [1] : tensor<2x4xf64>",
+        (2, 4),
+        (2, 4),
+        lambda y: y[:, ::-1],
+        ("fwddiff", "autodiff"),
+    ),
+    (
+        "reverse dims=[0, 1]",
+        "%r = stablehlo.reverse %y, dims = [0, 1] : tensor<2x4xf64>",
+        (2, 4),
+        (2, 4),
+        lambda y: y[::-1, ::-1],
+        ("fwddiff", "autodiff"),
+    ),
+    (
+        "y * reverse(y)",
+        "%v = stablehlo.reverse %y, dims = [0] : tensor<4xf64>\n"
+        "    %r = stablehlo.multiply %y, %v : tensor<4xf64>",
+        (4,),
+        (4,),
+        lambda y: y * y[::-1],
+        ("fwddiff", "autodiff"),
+    ),
+    (
+        "transpose",
+        "%r = stablehlo.transpose %y, dims = [1, 0] : "
+        "(tensor<2x4xf64>) -> tensor<4x2xf64>",
+        (2, 4),
+        (4, 2),
+        lambda y: y.T,
+        # A batched enzyme.autodiff of transpose is not supported yet: its
+        # rule builds the unbatched result type.
+        ("fwddiff",),
+    ),
+)
 
 
 def loop_derivative(generic):
@@ -199,6 +277,38 @@ class EnzymeDialect(absltest.TestCase):
                 np.testing.assert_allclose(
                     jax.jit(jax.grad(f))(v), [2.0, 2.0], rtol=1e-14
                 )
+
+    def test_batched_derivative_layout(self):
+        # Row k of a width-3 derivative is the one along row k of the seed. A
+        # random seed (not the identity) and a width that matches no operand
+        # dimension catch a rule that mixes up the batch and operand
+        # dimensions, as the reverse rule did.
+        rng = np.random.default_rng(0)
+        width = 3
+        for name, body, shape, out_shape, reference, ops in BATCHED_LAYOUT_CASES:
+            y = jnp.asarray(rng.normal(size=shape))
+            seeds = {
+                "fwddiff": rng.normal(size=(width,) + shape),
+                "autodiff": rng.normal(size=(width,) + out_shape),
+            }
+            _, vjp = jax.vjp(reference, y)
+            expected = {
+                "fwddiff": jax.vmap(lambda d: jax.jvp(reference, (y,), (d,))[1]),
+                "autodiff": jax.vmap(lambda d: vjp(d)[0]),
+            }
+            for op in ops:
+                seed = seeds[op]
+                for generic in (False, True):
+                    with self.subTest(name=name, op=op, generic=generic):
+                        source = batched_module(
+                            body, shape, out_shape, width, generic, op
+                        )
+                        result = jax.jit(
+                            lambda a, s: hlo_call(a, s, source=source)[0]
+                        )(y, jnp.asarray(seed))
+                        np.testing.assert_allclose(
+                            result, expected[op](seed), rtol=1e-14, atol=1e-14
+                        )
 
     def test_plain_module_pipeline_is_unchanged(self):
         from enzyme_ad.jax.primitives import _with_enzyme_lowering
