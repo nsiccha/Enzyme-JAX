@@ -443,8 +443,14 @@ def InversePermutation : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
   getI64Attr(builder, res);
 }]>;
 
-def Dimensions : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
-  op.getDimensions();
+// The dimensions a ReverseOp derivative reverses. With width > 1 the shadow
+// and the incoming derivative have a leading batch dimension, so each of the
+// op's dimensions moves up by one.
+def ReverseDimensions : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
+  SmallVector<int64_t> res;
+  for (auto dim : op.getDimensions())
+    res.push_back(to_i64(dim) + (gutils->width > 1));
+  getI64Attr(builder, res);
 }]>;
 
 // ConvolutionOp
@@ -1282,7 +1288,7 @@ def : HLODerivative<"RemOp", (Op $x, $y),
 
 def : HLOReadOnlyIdentityOp<"ReshapeOp", [0], (Op $x), [(Reshape (TypeOf $x), (DiffeRet))]>;
 
-def : HLODerivative<"ReverseOp", (Op $x), [(Reverse (DiffeRet), (Dimensions))], (Reverse (Shadow $x), (Dimensions))>;
+def : HLODerivative<"ReverseOp", (Op $x), [(Reverse (DiffeRet), (ReverseDimensions))], (Reverse (Shadow $x), (ReverseDimensions))>;
 
 def : HLOInactiveOp<"RoundOp">;
 
