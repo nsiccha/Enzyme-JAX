@@ -3,7 +3,7 @@
 # one bazel output base and disk cache. For Linux it runs inside the manylinux_2_28
 # container (clang/lld, static libstdc++, then auditwheel repair), the recipe of the
 # published cp314 manylinux_2_28_x86_64 wheels; for macOS it runs on the arm64 runner with
-# the flags of upstream's tag.yml.
+# the flags of upstream's tag.yml plus the deployment target that the platform tag names.
 #
 # Environment:
 #   PLATFORM     manylinux_2_28_x86_64 | manylinux_2_28_aarch64 | macosx_14_0_arm64
@@ -75,11 +75,26 @@ case "$PLATFORM" in
     echo "toolchain: $(clang --version | head -1); libstdc++: $LINKLIBS; glibc: $(ldd --version | head -1)"
     ;;
   macosx_14_0_arm64)
-    flags+=("--repo_env=CC=$(command -v clang)" --define=enable_triton=false
+    # The oldest macOS the platform tag promises, e.g. 14.0 for macosx_14_0_arm64. Bazel's
+    # macOS toolchain passes --macos_minimum_os to every compile and link as
+    # -mmacosx-version-min, and without it uses the SDK's version, which is newer than the
+    # tag. The build's own tools (the exec configuration) keep that default.
+    MACOS_MIN=$(sed -E 's/^macosx_([0-9]+)_([0-9]+)_.*$/\1.\2/' <<<"$PLATFORM")
+    flags+=("--repo_env=CC=$(command -v clang)" --define=enable_triton=false "--macos_minimum_os=$MACOS_MIN"
       --cxxopt=-Wno-nullability-completeness --host_cxxopt=-Wno-nullability-completeness)
-    echo "toolchain: $(clang --version | head -1); $(xcrun --show-sdk-path)"
+    echo "toolchain: $(clang --version | head -1); $(xcrun --show-sdk-path); deployment target $MACOS_MIN"
     ;;
 esac
+
+# macos_minos_ok <Mach-O file>: whether the file runs on MACOS_MIN, as the platform tag says.
+macos_minos_ok() {
+  local minos
+  vtool -show-build "$1"
+  minos=$(vtool -show-build "$1" | awk '$1 == "minos" {print $2; exit}')
+  awk -v m="${minos:-99}" -v t="$MACOS_MIN" \
+    'BEGIN { split(m, v, "."); split(t, w, "."); exit !(v[1] < w[1] || (v[1] == w[1] && v[2] + 0 <= w[2] + 0)) }' ||
+    { echo "$(basename "$1") needs macOS ${minos:-?}, newer than the tag's $MACOS_MIN"; return 1; }
+}
 
 # run_until <command…>: run it, interrupting it at DEADLINE (status 124 then).
 run_until() {
@@ -98,22 +113,47 @@ finish_wheel() {
       auditwheel repair --plat "$PLATFORM" -w "$OUT/wheelhouse" "$raw"
       ;;
     macosx_14_0_arm64)
-      # The tag promises macOS 14; the library must not need a newer one.
-      local so minos
+      # The library is the wheel's only native file.
+      local so rc=0
       so=$(mktemp -d)
       unzip -q -o "$raw" 'enzyme_ad/jax/enzyme_call.so' -d "$so"
-      vtool -show-build "$so/enzyme_ad/jax/enzyme_call.so"
       otool -L "$so/enzyme_ad/jax/enzyme_call.so"
-      minos=$(vtool -show-build "$so/enzyme_ad/jax/enzyme_call.so" | awk '$1 == "minos" {print $2; exit}')
+      macos_minos_ok "$so/enzyme_ad/jax/enzyme_call.so" || rc=1
       rm -rf "$so"
-      awk -v m="${minos:-99}" 'BEGIN { split(m, v, "."); exit !(v[1] < 14 || (v[1] == 14 && v[2] + 0 == 0)) }' ||
-        { echo "enzyme_call.so needs macOS ${minos:-?}, newer than its tag's 14.0"; return 1; }
+      [ "$rc" = 0 ] || return 1
       cp "$raw" "$OUT/wheelhouse/"
       ;;
   esac
   [ -f "$OUT/wheelhouse/$name" ] || { echo "expected $name, got: $(ls "$OUT/wheelhouse")"; return 1; }
   if command -v sha256sum >/dev/null; then sha256sum "$OUT/wheelhouse/$name"; else shasum -a 256 "$OUT/wheelhouse/$name"; fi
 }
+
+# --- On macOS, link a one-function library with the build's flags and check its deployment
+# target first, so a target that does not reach the toolchain fails in minutes, not after
+# hours of building. It uses the first version's flags, as the first build does.
+if [ "$PLATFORM" = macosx_14_0_arm64 ]; then
+  echo "::group::Deployment target of a probe library"
+  probe_py=${PYTHONS%% *}
+  export HERMETIC_PYTHON_VERSION=$probe_py
+  probe_flags=("${flags[@]}" "--repo_env=HERMETIC_PYTHON_VERSION=$probe_py")
+  mkdir -p flatppl_probe
+  echo 'int flatppl_probe(void) { return 0; }' >flatppl_probe/probe.c
+  printf 'cc_binary(\n    name = "probe.so",\n    srcs = ["probe.c"],\n    linkshared = True,\n)\n' >flatppl_probe/BUILD
+  rc=0
+  "${BZ[@]}" build "${probe_flags[@]}" //flatppl_probe:probe.so || rc=$?
+  if [ "$rc" = 0 ]; then
+    if ! probe=$("${BZ[@]}" cquery "${probe_flags[@]}" --output=files //flatppl_probe:probe.so 2>/dev/null |
+      grep -m1 '/probe\.so$') || ! macos_minos_ok "$probe"; then
+      rc=1
+    fi
+  fi
+  echo "::endgroup::"
+  if [ "$rc" != 0 ]; then
+    echo "::error::the probe library did not build or does not target macOS $MACOS_MIN; no wheel is built"
+    "${BZ[@]}" shutdown || true
+    exit 1
+  fi
+fi
 
 failed=() deferred=() first=1
 for py in $PYTHONS; do
@@ -171,7 +211,7 @@ for py in ${deferred[@]+"${deferred[@]}"}; do
 done
 deferred=(${unique[@]+"${unique[@]}"})
 
-echo "built: $(tr '\n' ' ' <"$OUT/built" 2>/dev/null || true)"
+echo "built: $(tr '\n' ' ' 2>/dev/null <"$OUT/built" || true)"
 echo "failed: ${failed[*]:-none}"
 echo "left for a later attempt: ${deferred[*]:-none}"
 [ "${#failed[@]}" = 0 ] || exit 1
