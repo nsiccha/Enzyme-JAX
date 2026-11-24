@@ -1,0 +1,174 @@
+# One platform of flatppl-wheels.yml: build the requested CPython versions of a FlatPPL
+# enzyme_ad candidate, test each wheel on this runner, and hand the passing ones to the
+# caller as artifacts named wheels-<platform>-<cp tags>.
+#
+# A cold build of LLVM, XLA and Enzyme-JAX can outlast GitHub's 6-hour job limit. So the
+# job runs as up to three attempts in sequence. Each one restores this platform's newest
+# bazel disk cache, builds what earlier attempts of this run have not, stops bazel before
+# the limit, and saves the cache again; the next attempt continues from there. An attempt
+# with nothing left to build finishes at once. Wheels still missing after the third attempt
+# are reported by the caller; re-running the workflow continues from the saved cache.
+
+name: FlatPPL wheels, one platform
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      pythons:
+        description: CPython versions to build, e.g. "3.12 3.13 3.15"
+        type: string
+        required: true
+      all_pythons:
+        description: every CPython version of the request (the source edits depend on it)
+        type: string
+        required: true
+      source_sha:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+      tests:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: write # list this run's artifacts, delete superseded bazel caches
+
+jobs:
+  build:
+    name: ${{ inputs.platform }}, attempt ${{ matrix.attempt }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 355
+    strategy:
+      # One attempt at a time; a failing attempt cancels the later ones.
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        attempt: [1, 2, 3]
+    env:
+      PLATFORM: ${{ inputs.platform }}
+      ALL_PYTHONS: ${{ inputs.all_pythons }}
+      VERSION: ${{ inputs.version }}
+      TESTS: ${{ inputs.tests }}
+      ROOT: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+      CACHE_PREFIX: flatppl-bazel-${{ inputs.platform }}-
+      CACHE_KEY: flatppl-bazel-${{ inputs.platform }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.attempt }}
+    steps:
+      - name: Start the clock
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: List what earlier attempts of this run left to build
+        id: todo
+        env:
+          REQUESTED: ${{ inputs.pythons }}
+        run: |
+          built=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate \
+            --jq '.artifacts[].name' | sed -n "s/^wheels-$PLATFORM-//p" | tr '-' '\n')
+          left=""
+          for py in $REQUESTED; do
+            grep -qxF "cp${py//./}" <<<"$built" || left="${left:+$left }$py"
+          done
+          {
+            echo "pythons=$left"
+            echo "python_list<<EOF"
+            for py in $left; do echo "$py"; done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "CPython versions still to build for $PLATFORM: ${left:-none}"
+
+      - name: Check out the build scripts
+        if: steps.todo.outputs.pythons != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: wf
+          sparse-checkout: .github/flatppl-wheels
+          persist-credentials: false
+
+      - name: Check out the candidate ${{ inputs.source_sha }}
+        if: steps.todo.outputs.pythons != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: src
+          persist-credentials: false
+
+      - name: Set up CPython ${{ steps.todo.outputs.pythons }} for the wheel tests
+        if: steps.todo.outputs.pythons != '' && runner.os == 'macOS'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ steps.todo.outputs.python_list }}
+          allow-prereleases: true
+
+      - name: Set up the tools
+        if: steps.todo.outputs.pythons != ''
+        run: bash wf/.github/flatppl-wheels/host.sh setup
+
+      - name: Restore the bazel cache
+        id: restore
+        if: steps.todo.outputs.pythons != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: work/disk-cache
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: ${{ env.CACHE_PREFIX }}
+
+      - name: Build
+        id: build
+        if: steps.todo.outputs.pythons != ''
+        env:
+          PYTHONS: ${{ steps.todo.outputs.pythons }}
+        run: bash wf/.github/flatppl-wheels/host.sh build
+
+      - name: Test the wheels
+        id: smoke
+        if: always() && steps.build.outcome != 'skipped'
+        run: bash wf/.github/flatppl-wheels/host.sh smoke
+
+      - name: Hand over the tested wheels
+        if: always() && steps.smoke.outputs.artifact != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.smoke.outputs.artifact }}
+          path: out/passed/*.whl
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Save the bazel cache
+        id: save
+        if: always() && steps.restore.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: work/disk-cache
+          key: ${{ env.CACHE_KEY }}
+
+      - name: Delete this platform's older bazel caches
+        if: always() && steps.save.outcome == 'success'
+        run: bash wf/.github/flatppl-wheels/host.sh prune-cache
+
+      - name: Verdict
+        if: always() && steps.todo.outputs.pythons != ''
+        env:
+          BUILD: ${{ steps.build.outputs.status }}
+          SMOKE: ${{ steps.smoke.outcome }}
+        run: |
+          # An attempt that ran out of time is not a failure: the next one continues from the
+          # saved cache, and the caller reports any wheel that is still missing at the end.
+          if [ "$BUILD" = incomplete ] && [ "$SMOKE" = success ]; then
+            echo "Stopped before the job time limit; the next attempt continues from the saved cache."
+            exit 0
+          fi
+          if [ "$BUILD" != "done" ] || [ "$SMOKE" != success ]; then
+            echo "::error::build ${BUILD:-not run}, tests $SMOKE"
+            exit 1
+          fi

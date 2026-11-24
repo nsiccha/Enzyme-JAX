@@ -1,0 +1,130 @@
+# Build the FlatPPL enzyme_ad wheels that a candidate's pre-release lacks.
+#
+# .github/flatppl-wheels/request.env names the candidate: its source commit, its version
+# and its pre-release on this repository. A push of this branch builds every requested
+# CPython x platform wheel that the release does not carry yet:
+#   manylinux_2_28_x86_64 and manylinux_2_28_aarch64 in the manylinux_2_28 container
+#   (clang/lld, static libstdc++, auditwheel repair), macosx_14_0_arm64 natively.
+# Each wheel is tested on its own platform (smoke.py) before it is uploaded; a wheel that
+# fails uploads nothing, and a wheel already on the release is never replaced.
+
+name: FlatPPL wheels
+
+on:
+  push:
+    branches: [flatppl-wheels]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flatppl-wheels
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan the missing wheels
+    runs-on: ubuntu-24.04
+    outputs:
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      version: ${{ steps.plan.outputs.version }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      all_pythons: ${{ steps.plan.outputs.all_pythons }}
+      tests: ${{ steps.plan.outputs.tests }}
+      manylinux_2_28_x86_64: ${{ steps.plan.outputs.manylinux_2_28_x86_64 }}
+      manylinux_2_28_aarch64: ${{ steps.plan.outputs.manylinux_2_28_aarch64 }}
+      macosx_14_0_arm64: ${{ steps.plan.outputs.macosx_14_0_arm64 }}
+      any: ${{ steps.plan.outputs.any }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/flatppl-wheels
+          persist-credentials: false
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/flatppl-wheels/plan.sh
+
+  linux-x86_64:
+    needs: plan
+    if: needs.plan.outputs.manylinux_2_28_x86_64 != ''
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/flatppl-wheels-build.yml
+    with:
+      platform: manylinux_2_28_x86_64
+      runner: ubuntu-24.04
+      pythons: ${{ needs.plan.outputs.manylinux_2_28_x86_64 }}
+      all_pythons: ${{ needs.plan.outputs.all_pythons }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      version: ${{ needs.plan.outputs.version }}
+      tests: ${{ needs.plan.outputs.tests }}
+
+  linux-aarch64:
+    needs: plan
+    if: needs.plan.outputs.manylinux_2_28_aarch64 != ''
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/flatppl-wheels-build.yml
+    with:
+      platform: manylinux_2_28_aarch64
+      runner: ubuntu-24.04-arm
+      pythons: ${{ needs.plan.outputs.manylinux_2_28_aarch64 }}
+      all_pythons: ${{ needs.plan.outputs.all_pythons }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      version: ${{ needs.plan.outputs.version }}
+      tests: ${{ needs.plan.outputs.tests }}
+
+  macos-arm64:
+    needs: plan
+    if: needs.plan.outputs.macosx_14_0_arm64 != ''
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/flatppl-wheels-build.yml
+    with:
+      platform: macosx_14_0_arm64
+      runner: macos-15
+      pythons: ${{ needs.plan.outputs.macosx_14_0_arm64 }}
+      all_pythons: ${{ needs.plan.outputs.all_pythons }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+      version: ${{ needs.plan.outputs.version }}
+      tests: ${{ needs.plan.outputs.tests }}
+
+  publish:
+    name: Upload the tested wheels to ${{ needs.plan.outputs.release_tag }}
+    needs: [plan, linux-x86_64, linux-aarch64, macos-arm64]
+    # Upload whatever passed, also when another platform failed.
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/flatppl-wheels
+          persist-credentials: false
+      - name: Find the tested wheels
+        id: found
+        run: |
+          n=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate \
+            --jq '.artifacts[].name | select(startswith("wheels-"))' | wc -l | tr -d ' ')
+          echo "count=$n" >> "$GITHUB_OUTPUT"
+          echo "$n wheel artifact(s)"
+      - name: Download the tested wheels
+        if: steps.found.outputs.count != '0'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Upload them to the pre-release
+        run: |
+          mkdir -p dist
+          bash .github/flatppl-wheels/publish.sh dist
