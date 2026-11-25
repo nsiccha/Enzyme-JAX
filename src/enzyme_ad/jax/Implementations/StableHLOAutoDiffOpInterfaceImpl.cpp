@@ -43,6 +43,7 @@
 #include "src/enzyme_ad/jax/Implementations/WhileLoopInfo.h"
 #include "src/enzyme_ad/jax/Implementations/XLADerivatives.h"
 #include "src/enzyme_ad/jax/Utils.h"
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <utility>
@@ -50,6 +51,13 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 using namespace mlir::stablehlo;
+
+// Marks the enzyme.init of a cache that a replay starts from: the trip count,
+// initial carry and values read from above of a loop that is reversed by
+// replaying its body (cacheTripCheckpointed). The replay has to reproduce the
+// forward iterations, so such a value must reach the reverse pass bit for bit:
+// an enclosing loop tapes it and never recomputes it (WhileOpEnzymeOpsRemover).
+static constexpr llvm::StringLiteral exactCacheAttr = "enzymexla.exact_cache";
 
 static int64_t to_i64(int64_t x) { return x; }
 static int64_t to_i64(llvm::APInt x) { return x.getSExtValue(); }
@@ -1905,6 +1913,17 @@ public:
             newnewWhile->getResult(newnewWhile->getNumResults() - 1)};
   }
 
+  // Caches `v` at `b` as a value the replay starts from (exactCacheAttr).
+  static Value initAndPushExactCache(MGradientUtilsReverse *gutils, Value v,
+                                     OpBuilder &b) {
+    Value cache = gutils->initAndPushCache(v, b);
+    auto push = cast<enzyme::PushOp>(&*std::prev(b.getInsertionPoint()));
+    for (Value c : {push.getCache(), cache})
+      if (auto init = c.getDefiningOp<enzyme::InitOp>())
+        init->setAttr(exactCacheAttr, b.getUnitAttr());
+    return cache;
+  }
+
   // Forward half: count the trips and keep what the replay starts from.
   // Cache layout: [N, x0 (one per iteration argument), captured values that
   // are not rebuilt].
@@ -1921,13 +1940,13 @@ public:
     b.setInsertionPointAfter(counted);
 
     SmallVector<Value> caches;
-    caches.push_back(gutils->initAndPushCache(numIters, b));
+    caches.push_back(initAndPushExactCache(gutils, numIters, b));
     for (Value init : inits)
-      caches.push_back(gutils->initAndPushCache(init, b));
+      caches.push_back(initAndPushExactCache(gutils, init, b));
     for (Value ref : getTripReplayRefs(orig))
       if (!isRebuiltTripReplayRef(ref))
         caches.push_back(
-            gutils->initAndPushCache(gutils->getNewFromOriginal(ref), b));
+            initAndPushExactCache(gutils, gutils->getNewFromOriginal(ref), b));
     return caches;
   }
 
@@ -5763,6 +5782,10 @@ public:
 
     llvm::MapVector<Value, CacheInfo> cachesMap;
 
+    // Values a replay starts from (exactCacheAttr). Recorded by value: merging
+    // two caches of one value keeps only one of their inits.
+    llvm::SmallDenseSet<Value> exactValues;
+
     for (auto &it : *body) {
       Operation *op = &it;
 
@@ -5785,6 +5808,8 @@ public:
         }
 
         Value pushedValue = info.pushedValue();
+        if (info.initOp->hasAttr(exactCacheAttr))
+          exactValues.insert(pushedValue);
         if (cachesMap.contains(pushedValue)) {
           info = info.merge(cachesMap.lookup(pushedValue), rewriter);
         }
@@ -5925,6 +5950,21 @@ public:
     enzyme::PlaceholderOp reverseIVPlaceholder = nullptr;
     IRMapping recomputedValues;
 
+    // A value a replay starts from is taped, never recomputed by the min cut
+    // below. XLA may round a recomputation differently from the forward pass,
+    // and the replay would then follow a different trajectory. Some do so by
+    // far more than a rounding error: near a repeated eigenvalue, a Jacobi
+    // eigensolve turns its rotations by whole angles for a one-ulp change.
+    SmallVector<CacheInfo> exactCaches;
+    {
+      auto exactBegin =
+          std::stable_partition(caches.begin(), caches.end(), [&](auto &c) {
+            return !exactValues.contains(c.pushedValue());
+          });
+      exactCaches.append(exactBegin, caches.end());
+      caches.erase(exactBegin, caches.end());
+    }
+
     // Run min cut partitioning to limit the amount of values to be cached.
     if (hasMinCut(whileOp) && caches.size()) {
       Block *forward = &whileOp.getBody().front();
@@ -6062,6 +6102,7 @@ public:
             CachedState{argument.getArgNumber(), recomputed, finalState});
       }
     }
+    caches.append(exactCaches.begin(), exactCaches.end());
 
     Value itersV = nullptr;
 
