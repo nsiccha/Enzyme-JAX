@@ -15,6 +15,11 @@ def repo():
             sha256 = ENZYME_SHA256,
             strip_prefix = "Enzyme-" + ENZYME_COMMIT + "/enzyme",
             urls = ["https://github.com/EnzymeAD/Enzyme/archive/{commit}.tar.gz".format(commit = ENZYME_COMMIT)],
-            patches = ["//:patches/enzyme_mincut_mapping.patch"],
+            # enzyme_weighted_mincut.patch: the C++ changes of nsiccha/Enzyme
+            # 8309d3252dcf362fc8e49266da164c30d7d54c18 (byte-weighted cache cut).
+            patches = [
+                "//:patches/enzyme_mincut_mapping.patch",
+                "//:patches/enzyme_weighted_mincut.patch",
+            ],
             patch_args = ["-p1"],
         )
