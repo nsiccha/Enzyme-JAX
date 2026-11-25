@@ -15,10 +15,12 @@
 // value, which nothing can bound, so it states the bound as
 // `enzymexla.max_trip_count`.
 //
-// By default such a loop is reversed by binomial checkpointing over the trip
-// count it ran instead (while_data_dependent_trip_count.mlir), which needs no
-// bound. `enzyme.enable_checkpointing = false` asks for the taped reverse
-// tested here.
+// A bound within the snapshot budget of binomial checkpointing
+// (enzyme.checkpoint_period, 32 by default), as here, selects this taped
+// reverse by default. A loop with a larger bound, or none, is reversed by
+// binomial checkpointing over the trip count it ran instead
+// (while_data_dependent_trip_count.mlir). `enzyme.enable_checkpointing = false`
+// asks for the taped reverse whatever the bound.
 
 module {
   func.func private @early_exit(%x: tensor<2xf64>) -> tensor<f64> {

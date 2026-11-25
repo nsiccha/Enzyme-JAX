@@ -1724,9 +1724,16 @@ public:
   // differentiated, so the replay is added to the reverse loop afterwards.
   //
   // `enzyme.checkpoint_period` sets the snapshot budget, as it does for
-  // binomial checkpointing of a counted loop; `enzyme.enable_checkpointing =
-  // false` asks for the plain reverse path instead, which tapes every
-  // iteration and so needs a static bound on the trip count.
+  // binomial checkpointing of a counted loop. A loop whose condition bounds its
+  // trip count by at most the budget (staticTripCountBound) takes the plain
+  // reverse path instead, which tapes every iteration: the tape then holds at
+  // most `budget` trips, and the reverse reads the forward's own values. A
+  // replay is compiled separately from the forward loop and matches it only up
+  // to rounding, which an iteration that amplifies rounding differences (a
+  // Jacobi sweep near a repeated eigenvalue) turns into a different trajectory
+  // and a wrong gradient. `enzyme.enable_checkpointing` overrides the choice:
+  // false asks for the plain path, which needs a static bound on the trip
+  // count, and true for the replay.
   //===--------------------------------------------------------------------===//
 
   // The default number of snapshots. With 32 the replays cost at most t*N body
@@ -1827,15 +1834,19 @@ public:
   }
 
   // Whether `op` is reversed by the scheme above: the plain path cannot count
-  // its trips, it can be replayed, and checkpointing was not turned off for it.
-  // A loop that cannot be replayed keeps the taped path, which needs a static
-  // bound on its trip count.
+  // its trips, it can be replayed, and `enzyme.enable_checkpointing` asks for
+  // the replay or, absent, no static trip bound fits the snapshot budget. Every
+  // other loop keeps the taped path, which needs a static bound on its trip
+  // count.
   static bool needsTripCheckpointing(stablehlo::WhileOp op) {
+    if (hasCountedTrips(op) || !canReplay(op))
+      return false;
     if (auto enabled =
             op->getAttrOfType<BoolAttr>(enableCheckpointingAttrName()))
-      if (!enabled.getValue())
-        return false;
-    return !hasCountedTrips(op) && canReplay(op);
+      return enabled.getValue();
+    std::optional<int64_t> bound = staticTripCountBound(op);
+    return !bound || *bound > getCheckpointBudget(op).value_or(
+                                  kDefaultTripCheckpointBudget);
   }
 
   // The values the body reads from enclosing scopes. The replays need them
