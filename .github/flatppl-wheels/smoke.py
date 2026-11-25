@@ -12,6 +12,10 @@ absl-py, and then, inside that environment:
   ``enzyme_ad.jax.hlo_call`` in reverse mode, and compares the gradient with forward
   mode and with the closed form (a wheel without the adaptive-while fix refuses these
   with "WhileOp does not have known iteration count for cache removal");
+* does the same for an early-exit loop that holds a counted loop and sits inside
+  another counted loop, the shape of FlatPPL's batched eigh convergence exit (a wheel
+  without the nested-loop fix refuses it with "WhileOp does not have induction variable
+  for cache removal");
 * runs each named test file from the candidate's ``test/`` directory.
 
 It exits non-zero if anything fails.
@@ -188,6 +192,48 @@ def inner(args):
     exact = [-2.0 * np.exp(-1.3), np.exp(-1.3)]
     gradient_checks(
         "adaptive ODE solve", solve, [jnp.float64(1.3), jnp.float64(2.0)], exact, 1e-4
+    )
+
+    # An early-exit loop that holds a counted loop, inside another counted loop, like a
+    # batched Jacobi convergence exit. Cell i sweeps until s >= 2.4 or 16 sweeps; each
+    # sweep is a counted loop that adds a * (1 + i/4) * weights[j] for j < 40. Every
+    # sweep adds the same amount, so ds/da is the sum over cells of the sweep count
+    # times (1 + i/4) times sum(weights). The inner loop's 40 trips matter: with 4, a
+    # wheel without the nested-loop fix still differentiated it.
+    weights = np.array([(1 + j % 3) / 80.0 for j in range(40)])
+    scales = [1.0 + 0.25 * i for i in range(6)]
+
+    def sweeps(a):
+        table = jnp.asarray(weights)
+
+        def cell(i, total):
+            step = a * (1.0 + 0.25 * i)
+
+            def body(c):
+                n, s = c
+                s = jax.lax.fori_loop(
+                    0, len(weights), lambda j, s: s + step * table[j], s
+                )
+                return n + 1, s
+
+            cond = lambda c: (c[0] < 16) & (c[1] < 2.4)
+            s = jax.lax.while_loop(cond, body, (0, jnp.zeros_like(a)))[1]
+            return total + s
+
+        return jax.lax.fori_loop(0, len(scales), cell, jnp.zeros_like(a))
+
+    def sweep_count(step):
+        n, s = 0, 0.0
+        while n < 16 and s < 2.4:
+            n += 1
+            for w in weights:
+                s += step * w
+        return n
+
+    a0 = 0.5
+    exact = [sum(sweep_count(a0 * c) * c for c in scales) * float(np.sum(weights))]
+    gradient_checks(
+        "early exit in a counted loop", sweeps, [jnp.float64(a0)], exact, 1e-12
     )
 
     print("reverse-mode checks " + ("passed" if ok else "FAILED"), flush=True)
