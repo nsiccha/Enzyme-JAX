@@ -1828,12 +1828,25 @@ public:
 
   // The values the body reads from enclosing scopes. The replays need them
   // inside the reverse loop, where the forward values are out of reach, so
-  // they are cached; the forward and reverse halves call this on the same
-  // original op and get the same order.
+  // they are cached, except for constants (isRebuiltTripReplayRef); the
+  // forward and reverse halves call this on the same original op and get the
+  // same order.
   static SmallVector<Value> getTripReplayRefs(stablehlo::WhileOp op) {
     SetVector<Value> refs;
     getUsedValuesDefinedAbove(op.getBody(), refs);
     return SmallVector<Value>(refs.begin(), refs.end());
+  }
+
+  // Whether the reverse rebuilds `ref` rather than popping a cached copy: a
+  // constant needs no cache. Caching one also hides it from the replayed body.
+  // When this loop sits in another loop's body, the cached copy becomes a tape
+  // indexed by that loop, so a counted loop in the replayed body would start
+  // and stop at values read from a tape: it would no longer count from zero to
+  // a constant, and its own caches could be neither sized nor indexed.
+  static bool isRebuiltTripReplayRef(Value ref) {
+    Operation *def = ref.getDefiningOp();
+    return def && def->hasTrait<OpTrait::ConstantLike>() &&
+           def->getNumOperands() == 0 && def->getNumRegions() == 0;
   }
 
   // Adds an i64 trip counter to the primal loop `newWhile` (the clone of
@@ -1893,7 +1906,8 @@ public:
   }
 
   // Forward half: count the trips and keep what the replay starts from.
-  // Cache layout: [N, x0 (one per iteration argument), captured values].
+  // Cache layout: [N, x0 (one per iteration argument), captured values that
+  // are not rebuilt].
   static SmallVector<Value>
   cacheTripCheckpointed(stablehlo::WhileOp orig,
                         MGradientUtilsReverse *gutils) {
@@ -1911,8 +1925,9 @@ public:
     for (Value init : inits)
       caches.push_back(gutils->initAndPushCache(init, b));
     for (Value ref : getTripReplayRefs(orig))
-      caches.push_back(
-          gutils->initAndPushCache(gutils->getNewFromOriginal(ref), b));
+      if (!isRebuiltTripReplayRef(ref))
+        caches.push_back(
+            gutils->initAndPushCache(gutils->getNewFromOriginal(ref), b));
     return caches;
   }
 
@@ -1979,8 +1994,11 @@ public:
     Block *origBody = &orig.getBody().front();
     size_t numArgs = origBody->getNumArguments();
     SmallVector<Value> refs = getTripReplayRefs(orig);
-    assert(caches.size() == 1 + numArgs + refs.size() &&
+    size_t numCachedRefs = llvm::count_if(
+        refs, [](Value ref) { return !isRebuiltTripReplayRef(ref); });
+    assert(caches.size() == 1 + numArgs + numCachedRefs &&
            "trip checkpoint cache layout mismatch");
+    (void)numCachedRefs;
 
     int64_t budget = kDefaultTripCheckpointBudget;
     if (auto period = getCheckpointBudget(orig)) {
@@ -1997,8 +2015,16 @@ public:
     for (size_t i = 0; i < numArgs; ++i)
       init.push_back(gutils->popCache(caches[1 + i], builder));
     SmallVector<Value> refVals;
-    for (size_t i = 0; i < refs.size(); ++i)
-      refVals.push_back(gutils->popCache(caches[1 + numArgs + i], builder));
+    size_t nextRefCache = 1 + numArgs;
+    for (Value ref : refs) {
+      if (isRebuiltTripReplayRef(ref)) {
+        refVals.push_back(
+            builder.clone(*ref.getDefiningOp())
+                ->getResult(cast<OpResult>(ref).getResultNumber()));
+        continue;
+      }
+      refVals.push_back(gutils->popCache(caches[nextRefCache++], builder));
+    }
     // The reverse rules of the replayed body read these through the mapping,
     // and the forward values need not dominate the reverse loop (they do not
     // when this loop sits in another loop's body). The caller restores the
