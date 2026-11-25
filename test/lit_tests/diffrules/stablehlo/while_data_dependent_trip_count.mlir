@@ -10,7 +10,10 @@
 // enzyme.checkpoint_period of them, 32 by default) and differentiates one step
 // per iteration. No buffer is sized by a trip count. A loop whose step adjoint
 // reads none of its state (@linear) needs no replay and keeps the plain reverse
-// loop over the trip count.
+// loop over the trip count. A loop whose condition bounds its trips by at most
+// the snapshot budget (@early_exit_within_budget) is taped instead, like a
+// counted loop of that many trips, unless enzyme.enable_checkpointing = true
+// asks for the replay.
 //
 // Every loop below is a geometric decay, run until the value drops to 1e-3:
 //
@@ -120,6 +123,75 @@ module {
     %r:3 = stablehlo.while(%i = %c0, %y = %y0, %s = %zero) : tensor<i64>, tensor<f64>, tensor<f64>
     cond {
       %b = stablehlo.compare LT, %i, %c100 : (tensor<i64>, tensor<i64>) -> tensor<i1>
+      %c = stablehlo.compare GT, %y, %thr : (tensor<f64>, tensor<f64>) -> tensor<i1>
+      %d = stablehlo.and %b, %c : tensor<i1>
+      stablehlo.return %d : tensor<i1>
+    } do {
+      %i2 = stablehlo.add %i, %c1 : tensor<i64>
+      %y2 = stablehlo.multiply %y, %a : tensor<f64>
+      %s2 = stablehlo.add %s, %y2 : tensor<f64>
+      stablehlo.return %i2, %y2, %s2 : tensor<i64>, tensor<f64>, tensor<f64>
+    }
+    return %r#2 : tensor<f64>
+  }
+
+  // The same loop bounded at 16 trips, within the default snapshot budget of
+  // 32: it is taped, and its reverse reads the forward's values instead of
+  // replaying the body.
+  func.func private @early_exit_within_budget(%a: tensor<f64>, %y0: tensor<f64>) -> tensor<f64> {
+    %thr = stablehlo.constant dense<1.000000e-03> : tensor<f64>
+    %zero = stablehlo.constant dense<0.000000e+00> : tensor<f64>
+    %c0 = stablehlo.constant dense<0> : tensor<i64>
+    %c1 = stablehlo.constant dense<1> : tensor<i64>
+    %c16 = stablehlo.constant dense<16> : tensor<i64>
+    %r:3 = stablehlo.while(%i = %c0, %y = %y0, %s = %zero) : tensor<i64>, tensor<f64>, tensor<f64>
+    cond {
+      %b = stablehlo.compare LT, %i, %c16 : (tensor<i64>, tensor<i64>) -> tensor<i1>
+      %c = stablehlo.compare GT, %y, %thr : (tensor<f64>, tensor<f64>) -> tensor<i1>
+      %d = stablehlo.and %b, %c : tensor<i1>
+      stablehlo.return %d : tensor<i1>
+    } do {
+      %i2 = stablehlo.add %i, %c1 : tensor<i64>
+      %y2 = stablehlo.multiply %y, %a : tensor<f64>
+      %s2 = stablehlo.add %s, %y2 : tensor<f64>
+      stablehlo.return %i2, %y2, %s2 : tensor<i64>, tensor<f64>, tensor<f64>
+    }
+    return %r#2 : tensor<f64>
+  }
+
+  // Bounded at 16 trips, over a snapshot budget of 8: replayed.
+  func.func private @early_exit_over_budget(%a: tensor<f64>, %y0: tensor<f64>) -> tensor<f64> {
+    %thr = stablehlo.constant dense<1.000000e-03> : tensor<f64>
+    %zero = stablehlo.constant dense<0.000000e+00> : tensor<f64>
+    %c0 = stablehlo.constant dense<0> : tensor<i64>
+    %c1 = stablehlo.constant dense<1> : tensor<i64>
+    %c16 = stablehlo.constant dense<16> : tensor<i64>
+    %r:3 = stablehlo.while(%i = %c0, %y = %y0, %s = %zero) : tensor<i64>, tensor<f64>, tensor<f64> attributes {enzyme.checkpoint_period = 8 : i64}
+    cond {
+      %b = stablehlo.compare LT, %i, %c16 : (tensor<i64>, tensor<i64>) -> tensor<i1>
+      %c = stablehlo.compare GT, %y, %thr : (tensor<f64>, tensor<f64>) -> tensor<i1>
+      %d = stablehlo.and %b, %c : tensor<i1>
+      stablehlo.return %d : tensor<i1>
+    } do {
+      %i2 = stablehlo.add %i, %c1 : tensor<i64>
+      %y2 = stablehlo.multiply %y, %a : tensor<f64>
+      %s2 = stablehlo.add %s, %y2 : tensor<f64>
+      stablehlo.return %i2, %y2, %s2 : tensor<i64>, tensor<f64>, tensor<f64>
+    }
+    return %r#2 : tensor<f64>
+  }
+
+  // Within the budget, but enzyme.enable_checkpointing = true asks for the
+  // replay.
+  func.func private @early_exit_replay_requested(%a: tensor<f64>, %y0: tensor<f64>) -> tensor<f64> {
+    %thr = stablehlo.constant dense<1.000000e-03> : tensor<f64>
+    %zero = stablehlo.constant dense<0.000000e+00> : tensor<f64>
+    %c0 = stablehlo.constant dense<0> : tensor<i64>
+    %c1 = stablehlo.constant dense<1> : tensor<i64>
+    %c16 = stablehlo.constant dense<16> : tensor<i64>
+    %r:3 = stablehlo.while(%i = %c0, %y = %y0, %s = %zero) : tensor<i64>, tensor<f64>, tensor<f64> attributes {enzyme.enable_checkpointing = true}
+    cond {
+      %b = stablehlo.compare LT, %i, %c16 : (tensor<i64>, tensor<i64>) -> tensor<i1>
       %c = stablehlo.compare GT, %y, %thr : (tensor<f64>, tensor<f64>) -> tensor<i1>
       %d = stablehlo.and %b, %c : tensor<i1>
       stablehlo.return %d : tensor<i1>
@@ -274,6 +346,18 @@ module {
     check.expect_close %e#0, %dsda, max_ulp_difference = 0 : tensor<f64>, tensor<f64>
     check.expect_close %e#1, %s, max_ulp_difference = 0 : tensor<f64>, tensor<f64>
 
+    %eb:2 = enzyme.autodiff @early_exit_within_budget(%a, %y0, %seed) <{activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]}> : (tensor<f64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<f64>)
+    check.expect_close %eb#0, %dsda, max_ulp_difference = 0 : tensor<f64>, tensor<f64>
+    check.expect_close %eb#1, %s, max_ulp_difference = 0 : tensor<f64>, tensor<f64>
+
+    %eo:2 = enzyme.autodiff @early_exit_over_budget(%a, %y0, %seed) <{activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]}> : (tensor<f64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<f64>)
+    check.expect_close %eo#0, %dsda, max_ulp_difference = 0 : tensor<f64>, tensor<f64>
+    check.expect_close %eo#1, %s, max_ulp_difference = 0 : tensor<f64>, tensor<f64>
+
+    %er:2 = enzyme.autodiff @early_exit_replay_requested(%a, %y0, %seed) <{activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_activenoneed>]}> : (tensor<f64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<f64>)
+    check.expect_close %er#0, %dsda, max_ulp_difference = 0 : tensor<f64>, tensor<f64>
+    check.expect_close %er#1, %s, max_ulp_difference = 0 : tensor<f64>, tensor<f64>
+
     %n:3 = enzyme.autodiff @nested_in_counted(%a, %y0, %seed) <{activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity = [#enzyme.activity<enzyme_active>]}> : (tensor<f64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<f64>, tensor<f64>)
     check.expect_close %n#0, %s3, max_ulp_difference = 0 : tensor<f64>, tensor<f64>
     check.expect_close %n#1, %dsda3, max_ulp_difference = 0 : tensor<f64>, tensor<f64>
@@ -342,6 +426,28 @@ module {
 // CHECK:         stablehlo.while({{.*}}) : tensor<i64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<32xi64>, tensor<32xf64>, tensor<32xf64>, tensor<32xi64>, tensor<f64>{{$}}
 // CHECK-NOT:     100x
 // CHECK:         {{ }}return
+
+// A bound within the snapshot budget tapes the loop: the forward loop carries a
+// 16-slot tape, and the reverse reads it with no replay.
+// CHECK-LABEL: func.func private @diffeearly_exit_within_budget(
+// CHECK-NOT:     enzyme.binomial_progress
+// CHECK:         %[[FWD:[0-9]+]]:5 = stablehlo.while({{.*}}) : tensor<i64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<16xf64>{{$}}
+// CHECK-NOT:     enzyme.binomial_progress
+// CHECK:         stablehlo.while({{.*}}) : tensor<i64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>{{$}}
+// CHECK-NOT:     enzyme.binomial_progress
+// CHECK:           stablehlo.dynamic_slice %[[FWD]]#4
+// CHECK-NOT:     enzyme.binomial_progress
+// CHECK:         {{ }}return
+
+// CHECK-LABEL: func.func private @diffeearly_exit_over_budget(
+// CHECK-NOT:     16x
+// CHECK:         stablehlo.while({{.*}}) : tensor<i64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<8xi64>, tensor<8xf64>, tensor<8xf64>, tensor<8xi64>, tensor<f64>{{$}}
+// CHECK:           enzyme.binomial_progress
+
+// CHECK-LABEL: func.func private @diffeearly_exit_replay_requested(
+// CHECK-NOT:     16x
+// CHECK:         stablehlo.while({{.*}}) : tensor<i64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<32xi64>, tensor<32xf64>, tensor<32xf64>, tensor<32xi64>, tensor<f64>{{$}}
+// CHECK:           enzyme.binomial_progress
 
 // The counted outer loop tapes, per outer trip, what the inner reverse starts
 // from: the inner trip count and initial carry.
