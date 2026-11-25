@@ -195,7 +195,7 @@ py_wheel(
     ],
     strip_path_prefixes = ["src/"],
     summary = "Enzyme automatic differentiation tool.",
-    version = "0.0.15+flatppl.23.adaptivewhile.boolrange.eigh.enzymedialect.batchedreverse.nestedwhile.1",
+    version = "0.0.15+flatppl.23.adaptivewhile.boolrange.eigh.enzymedialect.batchedreverse.nestedwhile.boundedtape.1",
     deps = [
         ":enzyme_jax_data",
         "//src/enzyme_ad/jax:enzyme_jax_internal",
